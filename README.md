@@ -13,7 +13,7 @@ It supports three workflows:
 
 ## How to Setup:
 - Download the PhaseLab folder, place wherever you like, if placed in user preset folder path defaults to that. (Optional: create an output folder)
-- Drag the PhaseLab application (no aluncher) to your desktop or applications folder, double click to open app. 
+- Drag the PhaseLab application (not luncher) to your desktop or applications folder, double click to open app. 
 - Start eperimenting!
 
 ## Disclaimers:
