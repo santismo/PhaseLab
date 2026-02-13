@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>PhaseLab Web</title>
+  <title>PhaseLab</title>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -46,6 +46,13 @@
       font-weight: 800;
       color: #eaffef;
       background: linear-gradient(145deg, #1b2c21, #102a17);
+    }
+    .logo img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 50%;
+      display: block;
     }
     h1 {
       margin: 0;
@@ -211,6 +218,12 @@
       font-size: 0.95rem;
       color: var(--muted);
     }
+    .output-actions {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
     .downloads {
       display: grid;
       gap: 6px;
@@ -242,9 +255,11 @@
 <body>
   <div class="app">
     <div class="top">
-      <div class="logo">PL</div>
+      <div class="logo" id="logoWrap">
+        <img src="PhaseLab/assets/phaselab-icon-1024.png" alt="PhaseLab logo" id="brandLogo" />
+      </div>
       <div>
-        <h1>PhaseLab Web</h1>
+        <h1>PhaseLab</h1>
         <div class="subtitle">Diffusion + Fusion + Catalyze + Anomalize in a pure static HTML app</div>
       </div>
     </div>
@@ -363,6 +378,10 @@
         <div class="status" id="runStatus">Ready.</div>
         <div class="output">
           <h3>Generated Downloads</h3>
+          <div class="output-actions">
+            <button class="btn" id="downloadAllBtn" type="button">Download All</button>
+            <button class="btn" id="clearGeneratedBtn" type="button">Clear Generated</button>
+          </div>
           <div class="downloads" id="downloads"></div>
         </div>
       </div>
@@ -402,6 +421,10 @@
         importStatus: document.getElementById("importStatus"),
         runStatus: document.getElementById("runStatus"),
         downloads: document.getElementById("downloads"),
+        downloadAllBtn: document.getElementById("downloadAllBtn"),
+        clearGeneratedBtn: document.getElementById("clearGeneratedBtn"),
+        brandLogo: document.getElementById("brandLogo"),
+        logoWrap: document.getElementById("logoWrap"),
         tabs: [...document.querySelectorAll(".tab")],
         modes: [...document.querySelectorAll(".mode")],
         diffAmount: document.getElementById("diffAmount"),
@@ -431,7 +454,8 @@
         internal: [],
         selected: new Set(),
         nameCounts: new Map(),
-        objectUrls: []
+        objectUrls: [],
+        generated: []
       };
 
       function setStatus(el, text, kind = "ok") {
@@ -518,6 +542,14 @@
         return [".pitch", "transpose", "semitone", "detune", "octave", "coarse", "fine_tune", ".tune", ".note", ".keytrack"].some((s) => canonical.includes(s));
       }
 
+      function isSyncPath(path) {
+        const canonical = normalizePath(path).toLowerCase();
+        return canonical.endsWith(".analog.sync")
+          || canonical.endsWith(".rate_numerator")
+          || canonical.endsWith(".length")
+          || canonical.endsWith(".rate");
+      }
+
       function isSwitchPath(path) {
         const canonical = normalizePath(path).toLowerCase();
         return [".enabled", ".send_enabled", ".mute", ".solo", ".bypass", ".active"].some((s) => canonical.endsWith(s));
@@ -560,6 +592,48 @@
         return out;
       }
 
+      function countChangedLeafValues(a, b) {
+        const aMap = new Map();
+        for (const leaf of collectLeafRefs(a)) {
+          if (typeof leaf.value === "string" || typeof leaf.value === "number" || typeof leaf.value === "boolean") {
+            aMap.set(leaf.path, String(leaf.value));
+          }
+        }
+        let changed = 0;
+        for (const leaf of collectLeafRefs(b)) {
+          if (!(typeof leaf.value === "string" || typeof leaf.value === "number" || typeof leaf.value === "boolean")) continue;
+          const prev = aMap.get(leaf.path);
+          if (prev !== undefined && prev !== String(leaf.value)) changed++;
+        }
+        return changed;
+      }
+
+      function captureProtectedSwitches(stateObj) {
+        const captured = new Map();
+        for (const leaf of collectLeafRefs(stateObj)) {
+          if (typeof leaf.value !== "string") continue;
+          if (leaf.value !== "true" && leaf.value !== "false") continue;
+          if (!isSwitchPath(leaf.path)) continue;
+          captured.set(leaf.path, leaf.value);
+        }
+        return captured;
+      }
+
+      function restoreProtectedSwitches(stateObj, captured) {
+        let restored = 0;
+        if (!captured || !captured.size) return restored;
+        for (const leaf of collectLeafRefs(stateObj)) {
+          const expected = captured.get(leaf.path);
+          if (expected === undefined) continue;
+          if (typeof leaf.value !== "string") continue;
+          if (leaf.value !== expected) {
+            leaf.parent[leaf.key] = expected;
+            restored++;
+          }
+        }
+        return restored;
+      }
+
       function clamp(path, value) {
         if (!Number.isFinite(value)) return value;
         const c = normalizePath(path).toLowerCase();
@@ -594,6 +668,109 @@
         return pool;
       }
 
+      function buildReferenceModel(states) {
+        const numeric = new Map();
+        const boolCounts = new Map();
+        for (const st of states) {
+          for (const leaf of collectLeafRefs(st)) {
+            if (typeof leaf.value !== "string") continue;
+            if (!isMutationPath(leaf.path) && !isEnumPath(leaf.path)) continue;
+            const canonical = normalizePath(leaf.path).toLowerCase();
+            const kind = valueKind(leaf.value);
+            if (kind === "num" && (!/^[+-]?\d+$/.test(leaf.value) || isWavetableFramePath(leaf.path))) {
+              const num = Number(leaf.value);
+              if (!Number.isFinite(num)) continue;
+              if (!numeric.has(canonical)) numeric.set(canonical, []);
+              numeric.get(canonical).push(num);
+            } else if (kind === "bool") {
+              if (!boolCounts.has(canonical)) boolCounts.set(canonical, { t: 0, f: 0 });
+              const row = boolCounts.get(canonical);
+              if (leaf.value === "true") row.t++;
+              else row.f++;
+            }
+          }
+        }
+        const boolProb = new Map();
+        for (const [k, v] of boolCounts.entries()) {
+          const total = v.t + v.f;
+          if (total > 0) boolProb.set(k, v.t / total);
+        }
+        return { numeric, boolProb };
+      }
+
+      function synthesizeRandomState(templateState, referenceModel, enumPool, rng, complexity) {
+        const st = deepClone(templateState);
+        let changed = 0;
+        const coverage = 0.15 + 0.85 * complexity;
+        for (const leaf of collectLeafRefs(st)) {
+          if (typeof leaf.value !== "string") continue;
+          if (!isMutationPath(leaf.path)) continue;
+          let localCoverage = coverage;
+          if (isWavetableFramePath(leaf.path)) localCoverage = Math.max(localCoverage, 0.7 + 0.25 * complexity);
+          if (rng() > localCoverage) continue;
+
+          const canonical = normalizePath(leaf.path).toLowerCase();
+          const kind = valueKind(leaf.value);
+          if (kind === "num" && (!/^[+-]?\d+$/.test(leaf.value) || isWavetableFramePath(leaf.path))) {
+            const base = Number(leaf.value);
+            if (!Number.isFinite(base)) continue;
+            const sourceVals = referenceModel.numeric.get(canonical) || [];
+            if (sourceVals.length) {
+              const pick = choice(rng, sourceVals);
+              const lo = Math.min(...sourceVals);
+              const hi = Math.max(...sourceVals);
+              let span = Math.max(hi - lo, Math.abs(pick) * 0.2, 0.01);
+              if (isWavetableFramePath(leaf.path)) span = Math.max(span, 24 + 128 * complexity);
+              let next = pick + (rng() * 2 - 1) * span * (0.15 + 0.35 * complexity);
+              if (isWavetableFramePath(leaf.path)) next = Math.max(0, Math.min(256, next));
+              next = clamp(leaf.path, next);
+              if (base >= 0) next = Math.max(0, next);
+              const txt = formatNum(next, leaf.value);
+              if (txt !== leaf.value) {
+                leaf.parent[leaf.key] = txt;
+                changed++;
+              }
+              continue;
+            }
+          }
+
+          if (kind === "bool") {
+            const pTrue = referenceModel.boolProb.get(canonical) ?? 0.5;
+            if (rng() < 0.35 + 0.55 * complexity) {
+              const rep = rng() < pTrue ? "true" : "false";
+              if (rep !== leaf.value) {
+                leaf.parent[leaf.key] = rep;
+                changed++;
+              }
+            }
+            continue;
+          }
+
+          if (kind === "str" && isEnumPath(leaf.path)) {
+            const options = enumOptionsForPath(leaf.path, enumPool);
+            if (options.length && rng() < 0.3 + 0.6 * complexity) {
+              const candidates = options.filter((x) => x !== leaf.value);
+              if (!candidates.length) continue;
+              const rep = choice(rng, candidates);
+              if (rep && rep !== leaf.value) {
+                leaf.parent[leaf.key] = rep;
+                changed++;
+              }
+            }
+            continue;
+          }
+
+          const rep = mutateStringValue(leaf.path, leaf.value, rng, 0.25 + 0.75 * complexity, enumPool);
+          if (rep !== leaf.value) {
+            leaf.parent[leaf.key] = rep;
+            changed++;
+          }
+        }
+        const curveRounds = 1 + Math.floor(Math.max(0, Math.min(1, complexity)) * 3);
+        for (let i = 0; i < curveRounds; i++) changed += mutateCurveSegments(st, rng, 0.25 + 0.75 * complexity);
+        return { state: st, changed };
+      }
+
       function enumOptionsForPath(path, enumPool) {
         const canonical = normalizePath(path).toLowerCase();
         if (enumPool.has(canonical)) return [...enumPool.get(canonical)];
@@ -610,8 +787,30 @@
           return value;
         }
         if (kind === "num") {
+          const canonical = normalizePath(path).toLowerCase();
           const isInt = /^[+-]?\d+$/.test(value);
-          if (isInt && !isWavetableFramePath(path)) return value;
+          if (isInt && !isWavetableFramePath(path)) {
+            const currentInt = Number(value);
+            if (!Number.isFinite(currentInt)) return value;
+            if (!isSyncPath(path)) return value;
+            if (canonical.endsWith(".analog.sync")) {
+              if (currentInt === 0) return "1";
+              if (currentInt === 1) return "0";
+              const flipped = Math.max(0, Math.min(2, currentInt + choice(rng, [-1, 1])));
+              return String(flipped);
+            }
+            if (canonical.endsWith(".rate_numerator")) return String(choice(rng, [1, 2, 3, 4, 6, 8, 12, 16]));
+            if (canonical.endsWith(".length")) {
+              const span = 1 + Math.round(3 * amount);
+              return String(Math.max(1, Math.min(16, currentInt + randInt(rng, -span, span))));
+            }
+            if (canonical.endsWith(".rate")) {
+              const span = 1 + Math.round(4 * amount);
+              return String(Math.max(0, Math.min(16, currentInt + randInt(rng, -span, span))));
+            }
+            const span = 1 + Math.round(2 * amount);
+            return String(Math.max(0, Math.min(32, currentInt + randInt(rng, -span, span))));
+          }
           const base = Number(value);
           if (!Number.isFinite(base)) return value;
           let span = Math.max(Math.abs(base) * (0.15 + amount * 0.75), 0.01);
@@ -628,10 +827,57 @@
         return value;
       }
 
-      function mutateState(stateObj, rng, amount, enumPool, preservePitchLow = false) {
+      function mutateCurveSegments(stateObj, rng, amount) {
+        let changes = 0;
+        const modulators = stateObj?.model?.modulators;
+        if (!Array.isArray(modulators)) return 0;
+        const amt = Math.max(0, Math.min(1, amount));
+        for (const mod of modulators) {
+          const lfo = mod?.lfo;
+          const curve = lfo?.curve;
+          const data = curve?.data;
+          const segments = data?.segments;
+          if (!Array.isArray(segments) || segments.length < 2) continue;
+          for (let idx = 0; idx < segments.length; idx++) {
+            const segment = segments[idx];
+            if (!segment || typeof segment !== "object") continue;
+            const xRaw = segment.x;
+            const yRaw = segment.y;
+            if (typeof xRaw !== "string" || typeof yRaw !== "string") continue;
+            const x = Number(xRaw);
+            const y = Number(yRaw);
+            if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+            if (rng() < (0.85 * amt)) {
+              const y2 = Math.max(-1, Math.min(1, y + (rng() * 2 - 1) * (0.7 * amt)));
+              const yTxt = formatNum(y2, yRaw);
+              if (yTxt !== yRaw) {
+                segment.y = yTxt;
+                changes++;
+              }
+            }
+            if (idx > 0 && idx < segments.length - 1 && rng() < (0.5 * amt)) {
+              const prevX = Number(segments[idx - 1]?.x ?? "0");
+              const nextX = Number(segments[idx + 1]?.x ?? "1");
+              if (!Number.isFinite(prevX) || !Number.isFinite(nextX) || nextX <= prevX) continue;
+              let x2 = x + (rng() * 2 - 1) * (0.15 * amt);
+              x2 = Math.max(0, Math.min(1, x2));
+              x2 = Math.max(prevX + 0.001, Math.min(nextX - 0.001, x2));
+              const xTxt = formatNum(x2, xRaw);
+              if (xTxt !== xRaw) {
+                segment.x = xTxt;
+                changes++;
+              }
+            }
+          }
+        }
+        return changes;
+      }
+
+      function mutateState(stateObj, rng, amount, enumPool, preservePitchLow = false, preserveSimilarity = 0) {
         let changed = 0;
+        const preserve = Math.max(0, Math.min(1, preserveSimilarity));
         const refs = collectLeafRefs(stateObj);
-        const chanceBase = Math.min(1, amount * 1.3);
+        const chanceBase = Math.min(1, amount * 1.3) * (1 - 0.55 * preserve);
         for (const ref of refs) {
           if (typeof ref.value !== "string") continue;
           const p = ref.path;
@@ -639,6 +885,7 @@
           if (preservePitchLow && amount <= 0.3 && isPitchPath(p)) continue;
           let chance = chanceBase;
           if (isWavetableFramePath(p)) chance = Math.max(chance, 0.55 + amount * 0.35);
+          if (isSyncPath(p)) chance = Math.max(chance, (0.22 + 0.35 * amount) * (1 - 0.35 * preserve));
           if (isEnumPath(p)) chance = Math.max(chance, 0.35 + amount * 0.2);
           if (rng() > chance) continue;
           const next = mutateStringValue(p, ref.value, rng, amount, enumPool);
@@ -647,6 +894,8 @@
             changed++;
           }
         }
+        const curveRounds = 1 + (amount > 0.6 ? 1 : 0);
+        for (let i = 0; i < curveRounds; i++) changed += mutateCurveSegments(stateObj, rng, amount);
         return changed;
       }
 
@@ -689,6 +938,1041 @@
         return changed;
       }
 
+      function parseLaneIndex(target) {
+        if (typeof target !== "string") return null;
+        const m = /^lane_(\d+)$/.exec(target);
+        if (!m) return null;
+        return Number(m[1]);
+      }
+
+      function parseFloatish(value, dflt = 0) {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : dflt;
+      }
+
+      function moduleType(module) {
+        return typeof module?.type === "string" ? module.type : "";
+      }
+
+      function iterLaneSnapins(stateObj) {
+        const out = [];
+        const lanes = stateObj?.model?.lanes;
+        if (!Array.isArray(lanes)) return out;
+        for (const lane of lanes) {
+          if (!lane || typeof lane !== "object") continue;
+          const holder = lane.snapins;
+          if (!holder || typeof holder !== "object") continue;
+          const snaps = holder.snapins;
+          if (!Array.isArray(snaps)) continue;
+          out.push({ lane, snapins: snaps });
+        }
+        return out;
+      }
+
+      function collectSnapinTemplates(states, maxItems = 256) {
+        const templates = [];
+        for (const st of states) {
+          for (const row of iterLaneSnapins(st)) {
+            for (const snap of row.snapins) {
+              if (!snap || typeof snap !== "object") continue;
+              templates.push(deepClone(snap));
+              if (templates.length >= maxItems) return templates;
+            }
+          }
+        }
+        return templates;
+      }
+
+      function collectLfoTemplates(states, maxItems = 256) {
+        const curves = [];
+        const tables = [];
+        for (const st of states) {
+          const modulators = st?.model?.modulators;
+          if (!Array.isArray(modulators)) continue;
+          for (const mod of modulators) {
+            const lfo = mod?.lfo;
+            if (!lfo || typeof lfo !== "object") continue;
+            const curveData = lfo?.curve?.data;
+            const tableData = lfo?.table?.data;
+            if (curveData && typeof curveData === "object") curves.push(deepClone(curveData));
+            if (tableData && typeof tableData === "object") tables.push(deepClone(tableData));
+            if (curves.length >= maxItems && tables.length >= maxItems) {
+              return { curves: curves.slice(0, maxItems), tables: tables.slice(0, maxItems) };
+            }
+          }
+        }
+        return { curves: curves.slice(0, maxItems), tables: tables.slice(0, maxItems) };
+      }
+
+      function nextSnapinInstanceId(stateObj) {
+        const ids = [];
+        for (const row of iterLaneSnapins(stateObj)) {
+          for (const snap of row.snapins) {
+            const id = snap?.instance_id;
+            if (typeof id === "string" && /^\d+$/.test(id)) ids.push(Number(id));
+          }
+        }
+        if (!ids.length) return "1";
+        return String(Math.max(...ids) + 1);
+      }
+
+      function countActiveModules(stateObj) {
+        const modules = stateObj?.model?.voice?.modules;
+        if (!Array.isArray(modules)) return 0;
+        return modules.filter((m) => m && typeof m === "object" && moduleType(m) !== "none").length;
+      }
+
+      function countGenerators(stateObj) {
+        const modules = stateObj?.model?.voice?.modules;
+        if (!Array.isArray(modules)) return 0;
+        return modules.filter((m) => m && typeof m === "object" && SOUND_GENERATOR_TYPES.has(moduleType(m))).length;
+      }
+
+      function countLaneSnapins(stateObj) {
+        let n = 0;
+        for (const row of iterLaneSnapins(stateObj)) n += row.snapins.length;
+        return n;
+      }
+
+      function quantile(values, q) {
+        if (!values.length) return 0;
+        const sorted = [...values].sort((a, b) => a - b);
+        const idx = Math.round((sorted.length - 1) * Math.max(0, Math.min(1, q)));
+        return sorted[idx];
+      }
+
+      function effectiveVoiceLaneLimit(model, lanes) {
+        const laneCount = Array.isArray(lanes) ? lanes.length : 0;
+        if (!laneCount) return 0;
+        const raw = model?.voice_lane_count;
+        let limit = laneCount;
+        if (typeof raw === "string" && /^\d+$/.test(raw)) limit = Number(raw);
+        else if (typeof raw === "number") limit = Math.floor(raw);
+        if (!Number.isFinite(limit) || limit <= 0) limit = laneCount;
+        return Math.max(1, Math.min(laneCount, limit));
+      }
+
+      function clampModuleOutput(module, laneCount) {
+        let repairs = 0;
+        let output = module?.output;
+        if (!output || typeof output !== "object") {
+          output = { $type: "output_module" };
+          module.output = output;
+          repairs++;
+        }
+        const target = typeof output.target === "string" ? output.target : "";
+        let idx = parseLaneIndex(target);
+        if (idx === null) idx = 0;
+        const fixed = Math.max(0, Math.min(Math.max(0, laneCount - 1), idx));
+        const wanted = `lane_${fixed}`;
+        if (output.target !== wanted) {
+          output.target = wanted;
+          repairs++;
+        }
+        if (output.send_enabled !== "true") {
+          output.send_enabled = "true";
+          repairs++;
+        }
+        if (parseFloatish(output.gain, 0) <= 0.001) {
+          output.gain = "0.25";
+          repairs++;
+        }
+        return repairs;
+      }
+
+      function normalizeModuleForSlot(module, slotIdx, laneCount) {
+        let repairs = 0;
+        if (typeof module.index === "number") {
+          if (module.index !== slotIdx) {
+            module.index = slotIdx;
+            repairs++;
+          }
+        } else {
+          const s = String(slotIdx);
+          if (module.index !== s) {
+            module.index = s;
+            repairs++;
+          }
+        }
+        const mt = moduleType(module);
+        if (mt !== "none" && module.enabled !== "true") {
+          module.enabled = "true";
+          repairs++;
+        }
+        if (SOUND_GENERATOR_TYPES.has(mt)) repairs += clampModuleOutput(module, laneCount || 1);
+        return repairs;
+      }
+
+      function collectModuleTemplates(states, maxItems = 512) {
+        const out = { all: [], groups: [], generators: [], effects: [] };
+        for (const st of states) {
+          const modules = st?.model?.voice?.modules;
+          if (!Array.isArray(modules)) continue;
+          for (const m of modules) {
+            if (!m || typeof m !== "object") continue;
+            const mt = moduleType(m);
+            if (mt === "none") continue;
+            const copy = deepClone(m);
+            out.all.push(copy);
+            if (mt === "group") out.groups.push(copy);
+            else if (SOUND_GENERATOR_TYPES.has(mt)) out.generators.push(copy);
+            else out.effects.push(copy);
+            if (out.all.length >= maxItems) return out;
+          }
+        }
+        return out;
+      }
+
+      function catalyzeExpandStructure(stateObj, donorStates, rng, complexity) {
+        let changes = 0;
+        const amt = Math.max(0, Math.min(1, complexity));
+        if (amt <= 0.01) return 0;
+
+        const model = stateObj?.model;
+        const voice = model?.voice;
+        const modules = voice?.modules;
+        const lanes = model?.lanes;
+        if (!model || typeof model !== "object" || !voice || typeof voice !== "object" || !Array.isArray(modules) || !Array.isArray(lanes)) {
+          return 0;
+        }
+        const voiceLaneLimit = effectiveVoiceLaneLimit(model, lanes) || 1;
+        const donor = donorStates && donorStates.length ? donorStates : [stateObj];
+        const stats = {
+          active: donor.map((s) => countActiveModules(s)),
+          generators: donor.map((s) => countGenerators(s)),
+          snapins: donor.map((s) => countLaneSnapins(s))
+        };
+        let activeNow = modules.filter((m) => m && typeof m === "object" && moduleType(m) !== "none").length;
+        let generatorsNow = modules.filter((m) => m && typeof m === "object" && SOUND_GENERATOR_TYPES.has(moduleType(m))).length;
+        const emptySlots = [];
+        modules.forEach((m, idx) => {
+          if (m && typeof m === "object" && moduleType(m) === "none") emptySlots.push(idx);
+        });
+
+        const templates = collectModuleTemplates(donor);
+        const donorActiveGoal = quantile(stats.active, 0.85);
+        const donorGenGoal = quantile(stats.generators, 0.85);
+        const LOGICAL_MAX_ACTIVE_MODULES = 20;
+        const LOGICAL_MAX_GENERATORS = 8;
+        const LOGICAL_MAX_TOTAL_SNAPINS = 14;
+        const LOGICAL_MAX_SNAPINS_PER_LANE = 12;
+        const targetActive = Math.min(LOGICAL_MAX_ACTIVE_MODULES, modules.length, Math.max(activeNow, Math.round((1 - amt) * activeNow + amt * Math.max(donorActiveGoal + 2, 8))));
+        const targetGenerators = Math.min(LOGICAL_MAX_GENERATORS, Math.max(generatorsNow, Math.round((1 - amt) * generatorsNow + amt * Math.max(donorGenGoal + 1, 2))));
+
+        while (emptySlots.length && activeNow < targetActive && templates.all.length) {
+          const slotIdx = emptySlots.shift();
+          let pool = templates.all;
+          if (generatorsNow < targetGenerators && templates.generators.length && rng() < 0.72) pool = templates.generators;
+          else if (templates.groups.length && rng() < (0.2 + 0.25 * amt)) pool = templates.groups;
+          else if (templates.effects.length && rng() < (0.45 + 0.2 * amt)) pool = templates.effects;
+          const t = deepClone(choice(rng, pool));
+          changes += normalizeModuleForSlot(t, slotIdx, voiceLaneLimit);
+          modules[slotIdx] = t;
+          activeNow++;
+          if (SOUND_GENERATOR_TYPES.has(moduleType(t))) generatorsNow++;
+          changes++;
+        }
+
+        const snapinPool = collectSnapinTemplates(donor, 768);
+        if (snapinPool.length) {
+          const currentSnapins = countLaneSnapins(stateObj);
+          let targetSnapins = Math.max(
+            currentSnapins,
+            Math.round((1 - amt) * currentSnapins + amt * Math.max(quantile(stats.snapins, 0.85) + 2, 6))
+          );
+          targetSnapins = Math.min(LOGICAL_MAX_TOTAL_SNAPINS, targetSnapins);
+          const laneRefs = iterLaneSnapins(stateObj);
+          let now = currentSnapins;
+          while (laneRefs.length && now < targetSnapins) {
+            const eligible = laneRefs.filter((x) => x.snapins.length < LOGICAL_MAX_SNAPINS_PER_LANE);
+            if (!eligible.length) break;
+            const picked = choice(rng, eligible);
+            const candidate = deepClone(choice(rng, snapinPool));
+            candidate.instance_id = nextSnapinInstanceId(stateObj);
+            if (!candidate.$type) candidate.$type = "snapin_instance";
+            picked.snapins.push(candidate);
+            now++;
+            changes++;
+          }
+        }
+
+        return changes;
+      }
+
+      function modulationTargetIsPitch(modulation) {
+        const target = modulation?.target;
+        const path = target?.path;
+        const entries = path?.entries;
+        if (!Array.isArray(entries)) return false;
+        const joined = entries.map((e) => String(e).toLowerCase()).join(".");
+        return joined.includes("pitch") || joined.includes("transpose") || joined.includes("semitone") || joined.includes("detune") || joined.includes("octave");
+      }
+
+      function mutateGlobalModulationAmounts(stateObj, rng, amount, preservePitchLow = false, pitchProtectThreshold = 0.3) {
+        let changes = 0;
+        const amt = Math.max(0, Math.min(1, amount));
+        const mods = stateObj?.model?.globals?.modulations;
+        if (!Array.isArray(mods)) return 0;
+        for (const mod of mods) {
+          if (!mod || typeof mod !== "object") continue;
+          if (preservePitchLow && amt <= pitchProtectThreshold && modulationTargetIsPitch(mod)) continue;
+          const av = mod.amount;
+          if (typeof av === "string" && /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(av) && rng() < (0.3 + 0.6 * amt)) {
+            const n = parseFloatish(av, 0);
+            const span = Math.max(Math.abs(n), 0.2) * (0.2 + 0.55 * amt);
+            const n2 = Math.max(-2, Math.min(2, n + (rng() * 2 - 1) * span));
+            const u = formatNum(n2, av);
+            if (u !== av) {
+              mod.amount = u;
+              changes++;
+            }
+          }
+          const cv = mod.curve;
+          if (typeof cv === "string" && /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(cv) && rng() < (0.18 + 0.45 * amt)) {
+            const c = parseFloatish(cv, 0);
+            const c2 = Math.max(-1, Math.min(1, c + (rng() * 2 - 1) * (0.08 + 0.35 * amt)));
+            const u = formatNum(c2, cv);
+            if (u !== cv) {
+              mod.curve = u;
+              changes++;
+            }
+          }
+        }
+        return changes;
+      }
+
+      function mutateActiveGeneratorParameters(stateObj, rng, amount, enumPool, preservePitchLow = false, pitchProtectThreshold = 0.3) {
+        let changes = 0;
+        const amt = Math.max(0, Math.min(1, amount));
+        const modules = stateObj?.model?.voice?.modules;
+        if (!Array.isArray(modules)) return 0;
+        const branchMap = {
+          analog_generator: ["analog", "mix", "filter", "distortion", "unison", "output"],
+          wavetable_generator: ["wavetable", "mix", "filter", "distortion", "unison", "output"],
+          sampler_generator: ["sampler", "mix", "filter", "distortion", "output"],
+          granular_generator: ["granular", "mix", "filter", "distortion", "output"],
+          noise_generator: ["noise", "mix", "filter", "distortion", "output"],
+          oscillator: ["oscillator", "mix", "filter", "distortion", "output"]
+        };
+        modules.forEach((module, idx) => {
+          const mt = moduleType(module);
+          if (!SOUND_GENERATOR_TYPES.has(mt)) return;
+          if (!truthy(module.enabled, true)) return;
+          const branches = branchMap[mt] || [];
+          const refs = [];
+          let moduleChanged = 0;
+          for (const branch of branches) {
+            const payload = module?.[branch];
+            if (!payload || typeof payload !== "object") continue;
+            for (const leaf of collectLeafRefs(payload, branch)) {
+              if (typeof leaf.value !== "string") continue;
+              const fullPath = `model.voice.modules[${idx}].${leaf.path}`;
+              if (!isMutationPath(fullPath)) continue;
+              if (preservePitchLow && amt <= pitchProtectThreshold && isPitchPath(fullPath)) continue;
+              refs.push({ leaf, fullPath, value: leaf.value });
+              let chance = 0.2 + 0.6 * amt;
+              if (isWavetableFramePath(fullPath)) chance = Math.max(chance, 0.75);
+              if (isEnumPath(fullPath)) chance = Math.max(chance, 0.65);
+              if (rng() > Math.min(1, chance)) continue;
+              let next = mutateStringValue(fullPath, leaf.value, rng, Math.max(0.2, amt), enumPool);
+              if (next === leaf.value && valueKind(leaf.value) === "num" && !/^[+-]?\d+$/.test(leaf.value)) {
+                const n = parseFloatish(leaf.value, 0);
+                const span = Math.max(Math.abs(n), 0.2) * (0.18 + 0.45 * amt);
+                let n2 = clamp(fullPath, n + (rng() * 2 - 1) * span);
+                if (n >= 0) n2 = Math.max(0, n2);
+                next = formatNum(n2, leaf.value);
+              }
+              if (next !== leaf.value) {
+                leaf.parent[leaf.key] = next;
+                changes++;
+                moduleChanged++;
+              }
+            }
+          }
+          if (refs.length && moduleChanged === 0 && amt >= 0.3) {
+            const pick = choice(rng, refs);
+            let forced = mutateStringValue(pick.fullPath, pick.value, rng, Math.max(0.45, amt), enumPool);
+            if (forced !== pick.value) {
+              pick.leaf.parent[pick.leaf.key] = forced;
+              changes++;
+            }
+          }
+        });
+        return changes;
+      }
+
+      function mutateGeneratorTypes(stateObj, rng, amount, donorStates = [], enumPool = null) {
+        let changes = 0;
+        const amt = Math.max(0, Math.min(1, amount));
+        const modules = stateObj?.model?.voice?.modules;
+        if (!Array.isArray(modules)) return 0;
+        const protectedModuleIdx = new Set();
+        const modulations = stateObj?.model?.globals?.modulations;
+        if (Array.isArray(modulations)) {
+          for (const mod of modulations) {
+            const target = mod?.target;
+            if (!target || typeof target !== "object") continue;
+            if (target.module !== "local") continue;
+            const entries = target?.path?.entries;
+            if (!Array.isArray(entries) || entries.length < 3) continue;
+            if (String(entries[0]) !== "voice" || String(entries[1]) !== "modules") continue;
+            const idx = Number(entries[2]);
+            if (Number.isInteger(idx) && idx >= 0) protectedModuleIdx.add(idx);
+          }
+        }
+        const allowed = new Set(["analog_generator", "wavetable_generator"]);
+        for (const st of donorStates || []) {
+          const donorModules = st?.model?.voice?.modules;
+          if (!Array.isArray(donorModules)) continue;
+          for (const m of donorModules) {
+            const mt = moduleType(m);
+            if (mt === "analog_generator" || mt === "wavetable_generator") allowed.add(mt);
+          }
+        }
+        const typePool = [...allowed];
+        const mutateChance = 0.06 + 0.22 * amt;
+        const wtOptions = enumPool && enumPool.has(".wavetable.wavetable_name") ? [...enumPool.get(".wavetable.wavetable_name")] : [];
+        modules.forEach((module, moduleIdx) => {
+          const currentType = moduleType(module);
+          if (!SOUND_GENERATOR_TYPES.has(currentType)) return;
+          if (protectedModuleIdx.has(moduleIdx)) return;
+          if (rng() > mutateChance) return;
+          const candidates = typePool.filter((x) => x !== currentType);
+          if (!candidates.length) return;
+          const nextType = choice(rng, candidates);
+          module.type = nextType;
+          changes++;
+          if (module.enabled !== "true") {
+            module.enabled = "true";
+            changes++;
+          }
+          if (!module.output || typeof module.output !== "object") {
+            module.output = { $type: "output_module" };
+            changes++;
+          }
+          if (module.output.send_enabled !== "true") {
+            module.output.send_enabled = "true";
+            changes++;
+          }
+          if (parseFloatish(module.output.gain, 0) < 0.05) {
+            module.output.gain = "0.25";
+            changes++;
+          }
+          if (nextType === "analog_generator") {
+            if (!module.analog || typeof module.analog !== "object") {
+              module.analog = { $type: "analog_generator" };
+              changes++;
+            }
+            if (typeof module.analog.waveform !== "string" || !DEFAULT_ANALOG_WAVEFORMS.includes(module.analog.waveform)) {
+              module.analog.waveform = choice(rng, DEFAULT_ANALOG_WAVEFORMS);
+              changes++;
+            }
+          } else if (nextType === "wavetable_generator") {
+            if (!module.wavetable || typeof module.wavetable !== "object") {
+              module.wavetable = { $type: "wavetable_generator" };
+              changes++;
+            }
+            if (typeof module.wavetable.wavetable_name !== "string" || !module.wavetable.wavetable_name.trim()) {
+              if (wtOptions.length) {
+                module.wavetable.wavetable_name = choice(rng, wtOptions);
+                changes++;
+              }
+            }
+            const frame = parseFloatish(module.wavetable.frame, 0);
+            if (frame < 0 || frame > 256) {
+              module.wavetable.frame = formatNum(Math.max(0, Math.min(256, frame)), String(module.wavetable.frame ?? "0"));
+              changes++;
+            }
+          }
+        });
+        return changes;
+      }
+
+      function diffuseLaneFxAndLfo(stateObj, rng, amount, donorStates = [], preserveSimilarity = 0) {
+        let changes = 0;
+        const amt = Math.max(0, Math.min(1, amount));
+        const preserve = Math.max(0, Math.min(1, preserveSimilarity));
+        const donors = donorStates && donorStates.length ? donorStates : [stateObj];
+        const protectedSnapinIds = new Set();
+        const existingModulations = stateObj?.model?.globals?.modulations;
+        if (Array.isArray(existingModulations)) {
+          for (const mod of existingModulations) {
+            const module = mod?.target?.module;
+            if (typeof module === "string" && /^\d+$/.test(module)) protectedSnapinIds.add(module);
+          }
+        }
+        const laneRows = iterLaneSnapins(stateObj);
+        const snapinPool = collectSnapinTemplates(donors, 512);
+        if (snapinPool.length && laneRows.length) {
+          const laneChance = Math.min(1, (0.18 + 0.55 * amt) * (1 - 0.35 * preserve));
+          for (const row of laneRows) {
+            if (!Array.isArray(row.snapins) || !row.snapins.length) continue;
+            if (rng() > laneChance) continue;
+            const mutableIndices = [];
+            for (let i = 0; i < row.snapins.length; i++) {
+              const id = row.snapins[i]?.instance_id;
+              if (typeof id === "string" && protectedSnapinIds.has(id)) continue;
+              mutableIndices.push(i);
+            }
+            if (!mutableIndices.length) continue;
+            const idx = choice(rng, mutableIndices);
+            const replacement = deepClone(choice(rng, snapinPool));
+            replacement.instance_id = nextSnapinInstanceId(stateObj);
+            if (!replacement.$type) replacement.$type = "snapin_instance";
+            row.snapins[idx] = replacement;
+            changes++;
+          }
+        }
+
+        const lfoTemplates = collectLfoTemplates(donors, 256);
+        const modulators = stateObj?.model?.modulators;
+        if (Array.isArray(modulators)) {
+          for (const mod of modulators) {
+            const lfo = mod?.lfo;
+            if (!lfo || typeof lfo !== "object") continue;
+            const lfoChance = Math.min(1, (0.14 + 0.42 * amt) * (1 - 0.3 * preserve));
+            if (lfoTemplates.tables.length && rng() < lfoChance) {
+              if (!lfo.table || typeof lfo.table !== "object") lfo.table = { $type: "table_data" };
+              lfo.table.data = deepClone(choice(rng, lfoTemplates.tables));
+              changes++;
+            }
+            if (lfoTemplates.curves.length && rng() < lfoChance) {
+              if (!lfo.curve || typeof lfo.curve !== "object") lfo.curve = { $type: "curve_data" };
+              lfo.curve.data = deepClone(choice(rng, lfoTemplates.curves));
+              changes++;
+            }
+            if (typeof lfo.frame === "string" && /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(lfo.frame) && rng() < (0.25 + 0.55 * amt)) {
+              let current = parseFloatish(lfo.frame, 0);
+              if (rng() < 0.55) current = rng() * 255;
+              else current += (rng() * 2 - 1) * (8 + 80 * amt);
+              current = Math.max(0, Math.min(255, current));
+              const rep = formatNum(current, lfo.frame);
+              if (rep !== lfo.frame) {
+                lfo.frame = rep;
+                changes++;
+              }
+            }
+          }
+        }
+        return changes;
+      }
+
+      function captureGeneratorIngredientGuard(stateObj) {
+        const out = new Map();
+        const modules = stateObj?.model?.voice?.modules;
+        if (!Array.isArray(modules)) return out;
+        modules.forEach((module, idx) => {
+          const mt = moduleType(module);
+          if (!SOUND_GENERATOR_TYPES.has(mt)) return;
+          const output = module?.output && typeof module.output === "object" ? module.output : {};
+          const mix = module?.mix && typeof module.mix === "object" ? module.mix : {};
+          const group = module?.group && typeof module.group === "object" ? deepClone(module.group) : null;
+          out.set(idx, {
+            type: mt,
+            enabled: String(module.enabled ?? "true"),
+            group,
+            output_target: output.target,
+            output_send_enabled: output.send_enabled,
+            output_gain: parseFloatish(output.gain, 0),
+            mix_gain: parseFloatish(mix.gain, -1)
+          });
+        });
+        return out;
+      }
+
+      function enforceGeneratorIngredientGuard(stateObj, guard, gainFloorRatio = 0.35) {
+        let repaired = 0;
+        const modules = stateObj?.model?.voice?.modules;
+        if (!Array.isArray(modules) || !guard) return repaired;
+        for (const [idx, data] of guard.entries()) {
+          if (idx < 0 || idx >= modules.length) continue;
+          const module = modules[idx];
+          if (!module || typeof module !== "object") continue;
+          const expectedType = data.type;
+          const currentType = moduleType(module);
+          if (typeof expectedType === "string") {
+            if (SOUND_GENERATOR_TYPES.has(expectedType)) {
+              if (!SOUND_GENERATOR_TYPES.has(currentType)) {
+                module.type = expectedType;
+                repaired++;
+              }
+            } else if (currentType !== expectedType) {
+              module.type = expectedType;
+              repaired++;
+            }
+          }
+          if (typeof data.enabled === "string" && module.enabled !== data.enabled) {
+            module.enabled = data.enabled;
+            repaired++;
+          }
+          if (data.group && typeof data.group === "object") {
+            if (!module.group || typeof module.group !== "object" || JSON.stringify(module.group) !== JSON.stringify(data.group)) {
+              module.group = deepClone(data.group);
+              repaired++;
+            }
+          }
+          if (!module.output || typeof module.output !== "object") {
+            module.output = { $type: "output_module" };
+            repaired++;
+          }
+          if (typeof data.output_target === "string" && module.output.target !== data.output_target) {
+            module.output.target = data.output_target;
+            repaired++;
+          }
+          if (typeof data.output_send_enabled === "string" && module.output.send_enabled !== data.output_send_enabled) {
+            module.output.send_enabled = data.output_send_enabled;
+            repaired++;
+          }
+          if (data.output_gain > 0.001) {
+            const floor = Math.max(0.03, data.output_gain * gainFloorRatio);
+            if (parseFloatish(module.output.gain, data.output_gain) < floor) {
+              module.output.gain = formatNum(floor, String(module.output.gain ?? "0"));
+              repaired++;
+            }
+          }
+          if (module.mix && typeof module.mix === "object" && data.mix_gain > 0.001) {
+            const floor = Math.max(0.03, data.mix_gain * gainFloorRatio);
+            if (parseFloatish(module.mix.gain, data.mix_gain) < floor) {
+              module.mix.gain = formatNum(floor, String(module.mix.gain ?? "0"));
+              repaired++;
+            }
+          }
+        }
+        return repaired;
+      }
+
+      function modulationSignature(modulation) {
+        const target = modulation?.target;
+        const path = target?.path;
+        const entries = path?.entries;
+        if (!Array.isArray(entries)) return null;
+        const module = String(target?.module ?? "");
+        return `${module}|${entries.map((e) => String(e)).join("/")}`;
+      }
+
+      function isMasterPitchModulation(modulation) {
+        const target = modulation?.target;
+        const path = target?.path;
+        const entries = path?.entries;
+        if (!Array.isArray(entries)) return false;
+        const module = String(target?.module ?? "").toLowerCase();
+        const lowerEntries = entries.map((e) => String(e).toLowerCase());
+        const hasPitch = lowerEntries.some((x) => x.includes("pitch"));
+        const isMaster = module === "master" || lowerEntries.some((x) => x.includes("master"));
+        return hasPitch && isMaster;
+      }
+
+      function captureMasterPitchModulationSignatures(stateObj) {
+        const mods = stateObj?.model?.globals?.modulations;
+        if (!Array.isArray(mods)) return [];
+        const out = [];
+        for (const mod of mods) {
+          if (!mod || typeof mod !== "object") continue;
+          if (!isMasterPitchModulation(mod)) continue;
+          const sig = modulationSignature(mod);
+          if (sig) out.push(sig);
+        }
+        return [...new Set(out)].sort();
+      }
+
+      function removeNewMasterPitchModulations(stateObj, allowedSignatures) {
+        const mods = stateObj?.model?.globals?.modulations;
+        if (!Array.isArray(mods)) return 0;
+        const allowed = new Set(allowedSignatures || []);
+        const kept = [];
+        let removed = 0;
+        for (const mod of mods) {
+          if (!mod || typeof mod !== "object") {
+            kept.push(mod);
+            continue;
+          }
+          if (isMasterPitchModulation(mod)) {
+            const sig = modulationSignature(mod);
+            if (!allowed.has(sig)) {
+              removed++;
+              continue;
+            }
+          }
+          kept.push(mod);
+        }
+        if (removed) stateObj.model.globals.modulations = kept;
+        return removed;
+      }
+
+      function sanitizeStateForOutput(stateObj, enumPool = null) {
+        let repaired = 0;
+        const model = stateObj?.model;
+        if (!model || typeof model !== "object") return repaired;
+        const lanes = model.lanes;
+        if (Array.isArray(lanes)) {
+          for (const lane of lanes) {
+            if (!lane || typeof lane !== "object") continue;
+            if (typeof lane.mute === "string" && lane.mute !== "false") {
+              lane.mute = "false";
+              repaired++;
+            }
+            if (typeof lane.solo === "string" && lane.solo !== "false") {
+              lane.solo = "false";
+              repaired++;
+            }
+          }
+        }
+        // Do not remap modulation targets to fallback snapins.
+        // Invalid modulation paths are pruned by sanitizeModulations().
+
+        const modules = stateObj?.model?.voice?.modules;
+        if (Array.isArray(modules)) {
+          const wtOptions = enumPool && enumPool.has(".wavetable.wavetable_name") ? [...enumPool.get(".wavetable.wavetable_name")] : [];
+          for (const module of modules) {
+            if (moduleType(module) !== "wavetable_generator" || !truthy(module.enabled, true)) continue;
+            const wt = module?.wavetable;
+            if (!wt || typeof wt !== "object") continue;
+            if (typeof wt.wavetable_name !== "string" || !wt.wavetable_name.trim()) {
+              if (wtOptions.length) {
+                wt.wavetable_name = wtOptions[0];
+                repaired++;
+              }
+            }
+            const frame = parseFloatish(wt.frame, -1);
+            if (frame < 0) {
+              wt.frame = "0";
+              repaired++;
+            } else if (frame > 256) {
+              wt.frame = "256";
+              repaired++;
+            }
+          }
+        }
+        return repaired;
+      }
+
+      function laneSnapinCount(lane) {
+        const snaps = lane?.snapins?.snapins;
+        if (!Array.isArray(snaps)) return 0;
+        return snaps.filter((item) => item && typeof item === "object").length;
+      }
+
+      function ensureLaneAudibleDefaults(lane, minGain = 0.8, minMix = 0.8) {
+        let repairs = 0;
+        if (lane.enabled !== "true") {
+          lane.enabled = "true";
+          repairs++;
+        }
+        if (lane.mute !== "false") {
+          lane.mute = "false";
+          repairs++;
+        }
+        if (lane.solo !== "false") {
+          lane.solo = "false";
+          repairs++;
+        }
+        if (parseFloatish(lane.gain, 0) < minGain) {
+          lane.gain = formatNum(minGain, String(lane.gain ?? "1"));
+          repairs++;
+        }
+        if (parseFloatish(lane.mix, 0) < minMix) {
+          lane.mix = formatNum(minMix, String(lane.mix ?? "1"));
+          repairs++;
+        }
+        if (!lane.snapins || typeof lane.snapins !== "object") {
+          lane.snapins = { $type: "snapin_list", snapins: [] };
+          repairs++;
+        } else if (!Array.isArray(lane.snapins.snapins)) {
+          lane.snapins.snapins = [];
+          repairs++;
+        }
+        return repairs;
+      }
+
+      function moduleIsAudible(module, lanes, validLaneCount = null) {
+        const mt = moduleType(module);
+        if (!SOUND_GENERATOR_TYPES.has(mt)) return false;
+        if (!truthy(module.enabled, true)) return false;
+        const output = module?.output;
+        if (!output || typeof output !== "object") return false;
+        if (!truthy(output.send_enabled, true)) return false;
+        if (parseFloatish(output.gain, 0) <= 0.001) return false;
+        const target = output.target;
+        if (typeof target !== "string") return false;
+        const laneIdx = parseLaneIndex(target);
+        if (laneIdx === null) return true;
+        const laneLimit = Number.isInteger(validLaneCount) && validLaneCount > 0 ? validLaneCount : lanes.length;
+        if (laneIdx < 0 || laneIdx >= laneLimit) return false;
+        const lane = lanes[laneIdx];
+        if (!lane || typeof lane !== "object") return false;
+        if (!truthy(lane.enabled, true)) return false;
+        if (truthy(lane.mute, false)) return false;
+        if (parseFloatish(lane.gain, 1) <= 0.001) return false;
+        if (parseFloatish(lane.mix, 1) <= 0.001) return false;
+        return true;
+      }
+
+      function setOutputTarget(module, laneIdx, gainFloor = 0.25) {
+        let repairs = 0;
+        if (!module.output || typeof module.output !== "object") {
+          module.output = { $type: "output_module" };
+          repairs++;
+        }
+        const wanted = `lane_${Math.max(0, laneIdx)}`;
+        if (module.output.target !== wanted) {
+          module.output.target = wanted;
+          repairs++;
+        }
+        if (module.output.send_enabled !== "true") {
+          module.output.send_enabled = "true";
+          repairs++;
+        }
+        if (parseFloatish(module.output.gain, 0) < gainFloor) {
+          module.output.gain = formatNum(gainFloor, String(module.output.gain ?? "0"));
+          repairs++;
+        }
+        return repairs;
+      }
+
+      function ensureGeneratorRoutingIntegrity(stateObj, gainFloor = 0.2) {
+        const model = stateObj?.model;
+        const voice = model?.voice;
+        const lanes = model?.lanes;
+        const modules = voice?.modules;
+        if (!model || typeof model !== "object" || !voice || typeof voice !== "object" || !Array.isArray(lanes) || !Array.isArray(modules)) return 0;
+        let repairs = 0;
+        if (!lanes.length) {
+          lanes.push({
+            $type: "lane",
+            enabled: "true",
+            gain: "1",
+            mix: "1",
+            mute: "false",
+            solo: "false",
+            snapins: { $type: "snapin_list", snapins: [] }
+          });
+          repairs++;
+        }
+        if (lanes[0] && typeof lanes[0] === "object") repairs += ensureLaneAudibleDefaults(lanes[0], 0.8, 0.8);
+        const voiceLaneLimit = effectiveVoiceLaneLimit(model, lanes);
+        let fallbackLaneIdx = 0;
+        for (let idx = 0; idx < voiceLaneLimit; idx++) {
+          const lane = lanes[idx];
+          if (!lane || typeof lane !== "object") continue;
+          if (!truthy(lane.enabled, true)) continue;
+          if (truthy(lane.mute, false)) continue;
+          if (parseFloatish(lane.gain, 1) <= 0.01) continue;
+          if (parseFloatish(lane.mix, 1) <= 0.01) continue;
+          fallbackLaneIdx = idx;
+          break;
+        }
+        for (const module of modules) {
+          if (!module || typeof module !== "object") continue;
+          if (!SOUND_GENERATOR_TYPES.has(moduleType(module))) continue;
+          if (module.enabled !== "true") {
+            module.enabled = "true";
+            repairs++;
+          }
+          const output = module.output;
+          const laneIdx = typeof output?.target === "string" ? parseLaneIndex(output.target) : null;
+          if (!output || typeof output !== "object" || laneIdx === null || laneIdx < 0 || laneIdx >= voiceLaneLimit) {
+            repairs += setOutputTarget(module, fallbackLaneIdx, gainFloor);
+          } else {
+            if (output.send_enabled !== "true") {
+              output.send_enabled = "true";
+              repairs++;
+            }
+            if (parseFloatish(output.gain, 0) < gainFloor) {
+              output.gain = formatNum(gainFloor, String(output.gain ?? "0"));
+              repairs++;
+            }
+          }
+          if (module.mix && typeof module.mix === "object" && parseFloatish(module.mix.gain, 0) < 0.12) {
+            module.mix.gain = "0.25";
+            repairs++;
+          }
+        }
+        return repairs;
+      }
+
+      function repairFilterModelValues(modelObj) {
+        if (!modelObj || typeof modelObj !== "object") return 0;
+        let repairs = 0;
+        const modelType = String(modelObj.$type ?? "").toLowerCase();
+        const filterKind = String(modelObj.type ?? "").toLowerCase();
+        const setClamped = (key, low, high, preferredIfOob = null) => {
+          const raw = modelObj[key];
+          if (typeof raw !== "string" || !/^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(raw)) return;
+          const value = Number(raw);
+          if (!Number.isFinite(value)) return;
+          let next = value;
+          if (value < low || value > high) next = preferredIfOob === null ? Math.max(low, Math.min(high, value)) : preferredIfOob;
+          if (next !== value) {
+            modelObj[key] = formatNum(next, raw);
+            repairs++;
+          }
+        };
+        if ("cutoff" in modelObj) {
+          let preferred = null;
+          if (filterKind.includes("high")) preferred = 1200;
+          else if (filterKind.includes("low")) preferred = 800;
+          else if (filterKind.includes("band")) preferred = 900;
+          setClamped("cutoff", 35, 18000, preferred);
+        }
+        if ("q" in modelObj) setClamped("q", 0.1, 12);
+        if ("resonance" in modelObj) setClamped("resonance", 0, 0.97);
+        if ("gain" in modelObj && (modelType === "filter" || modelType === "filter_fx" || modelType === "ladder")) {
+          setClamped("gain", 0.05, 8, 1);
+        }
+        if ("drive" in modelObj) setClamped("drive", 0, 8, 1);
+        if ("mix" in modelObj) setClamped("mix", 0, 1);
+        return repairs;
+      }
+
+      function ensureFilterAudibilityRanges(stateObj) {
+        const model = stateObj?.model;
+        if (!model || typeof model !== "object") return 0;
+        let repairs = 0;
+        const modules = model?.voice?.modules;
+        if (Array.isArray(modules)) {
+          for (const module of modules) {
+            if (!module || typeof module !== "object") continue;
+            if (module.filter && typeof module.filter === "object") repairs += repairFilterModelValues(module.filter);
+          }
+        }
+        const lanes = model?.lanes;
+        if (Array.isArray(lanes)) {
+          for (const lane of lanes) {
+            const snapins = lane?.snapins?.snapins;
+            if (!Array.isArray(snapins)) continue;
+            for (const snapin of snapins) {
+              const snapinModel = snapin?.state?.model;
+              if (!snapinModel || typeof snapinModel !== "object") continue;
+              const stype = String(snapinModel.$type ?? "").toLowerCase();
+              if (stype === "filter" || stype === "ladder" || stype === "ladder_filter") repairs += repairFilterModelValues(snapinModel);
+            }
+          }
+        }
+        return repairs;
+      }
+
+      function ensureAudibleSignalPath(stateObj) {
+        const model = stateObj?.model;
+        const voice = model?.voice;
+        const modules = voice?.modules;
+        const lanes = model?.lanes;
+        if (!model || typeof model !== "object" || !voice || typeof voice !== "object" || !Array.isArray(modules) || !Array.isArray(lanes)) return 0;
+        const voiceLaneLimit = effectiveVoiceLaneLimit(model, lanes);
+        if (modules.some((m) => m && typeof m === "object" && moduleIsAudible(m, lanes, voiceLaneLimit))) return 0;
+        let repairs = 0;
+        let lane0 = lanes[0];
+        if (!lane0 || typeof lane0 !== "object") {
+          lane0 = {
+            $type: "lane",
+            enabled: "true",
+            gain: "1",
+            mix: "1",
+            mute: "false",
+            solo: "false",
+            snapins: { $type: "snapin_list", snapins: [] }
+          };
+          lanes.unshift(lane0);
+          repairs++;
+        }
+        repairs += ensureLaneAudibleDefaults(lane0, 1, 1);
+        let candidate = modules.find((m) => m && typeof m === "object" && SOUND_GENERATOR_TYPES.has(moduleType(m)));
+        if (!candidate) candidate = modules.find((m) => m && typeof m === "object" && moduleType(m) === "none");
+        if (!candidate) return repairs;
+        if (moduleType(candidate) === "none") {
+          candidate.type = "analog_generator";
+          repairs++;
+        }
+        if (candidate.enabled !== "true") {
+          candidate.enabled = "true";
+          repairs++;
+        }
+        if (!candidate.analog || typeof candidate.analog !== "object") {
+          candidate.analog = { $type: "analog_generator" };
+          repairs++;
+        }
+        if (!DEFAULT_ANALOG_WAVEFORMS.includes(candidate.analog.waveform)) {
+          candidate.analog.waveform = "saw";
+          repairs++;
+        }
+        repairs += setOutputTarget(candidate, 0, 0.25);
+        return repairs;
+      }
+
+      function ensureRandomAudibleAnchor(stateObj) {
+        const model = stateObj?.model;
+        const voice = model?.voice;
+        const lanes = model?.lanes;
+        const modules = voice?.modules;
+        if (!model || typeof model !== "object" || !voice || typeof voice !== "object" || !Array.isArray(lanes) || !Array.isArray(modules)) return 0;
+        let repairs = 0;
+        const generators = modules.filter((m) => m && typeof m === "object" && SOUND_GENERATOR_TYPES.has(moduleType(m)));
+        if (!generators.length) return repairs;
+        const voiceLaneLimit = effectiveVoiceLaneLimit(model, lanes);
+        if (voiceLaneLimit <= 0) return repairs;
+        for (const module of generators) {
+          const laneIdx = parseLaneIndex(module?.output?.target);
+          if (laneIdx === null || laneIdx < 0 || laneIdx >= voiceLaneLimit) continue;
+          const lane = lanes[laneIdx];
+          if (!lane || typeof lane !== "object") continue;
+          if (laneSnapinCount(lane) === 0 && moduleIsAudible(module, lanes, voiceLaneLimit)) return repairs;
+        }
+        let dryLaneIdx = null;
+        for (let idx = 0; idx < voiceLaneLimit; idx++) {
+          const lane = lanes[idx];
+          if (!lane || typeof lane !== "object") continue;
+          if (laneSnapinCount(lane) === 0) {
+            dryLaneIdx = idx;
+            break;
+          }
+        }
+        if (dryLaneIdx === null) {
+          if (voiceLaneLimit < lanes.length) dryLaneIdx = 0;
+          else {
+            lanes.push({
+              $type: "lane",
+              enabled: "true",
+              gain: "1",
+              mix: "1",
+              mute: "false",
+              solo: "false",
+              snapins: { $type: "snapin_list", snapins: [] }
+            });
+            dryLaneIdx = lanes.length - 1;
+            repairs++;
+          }
+        }
+        const dryLane = lanes[dryLaneIdx];
+        if (dryLane && typeof dryLane === "object") repairs += ensureLaneAudibleDefaults(dryLane, 0.9, 0.9);
+        const anchor = generators[0];
+        repairs += setOutputTarget(anchor, dryLaneIdx, 0.25);
+        if (anchor.mix && typeof anchor.mix === "object" && parseFloatish(anchor.mix.gain, 0) < 0.2) {
+          anchor.mix.gain = "0.3";
+          repairs++;
+        }
+        return repairs;
+      }
+
+      function applyOutputAudibilitySafety(stateObj) {
+        let repairs = 0;
+        repairs += sanitizeModulations(stateObj);
+        repairs += ensureFilterAudibilityRanges(stateObj);
+        repairs += ensureGeneratorRoutingIntegrity(stateObj, 0.2);
+        repairs += ensureRandomAudibleAnchor(stateObj);
+        repairs += applyAudibilitySafety(stateObj);
+        repairs += ensureAudibleSignalPath(stateObj);
+        return repairs;
+      }
+
+      function applyRandomAudibilitySafety(stateObj) {
+        let repairs = 0;
+        repairs += sanitizeModulations(stateObj);
+        repairs += ensureGeneratorRoutingIntegrity(stateObj, 0.2);
+        repairs += ensureFilterAudibilityRanges(stateObj);
+        repairs += ensureRandomAudibleAnchor(stateObj);
+        repairs += ensureAudibleSignalPath(stateObj);
+        return repairs;
+      }
+
       function truthy(v, dflt = true) {
         if (typeof v === "boolean") return v;
         if (typeof v === "string") {
@@ -718,8 +2002,50 @@
           }];
           repairs++;
         }
+        const laneList = Array.isArray(model.lanes) ? model.lanes : [];
+        const laneCount = laneList.length || 1;
+        const voiceLaneRaw = model.voice_lane_count;
+        let voiceLaneCount = laneCount;
+        if (typeof voiceLaneRaw === "string" && /^\d+$/.test(voiceLaneRaw)) voiceLaneCount = Number(voiceLaneRaw);
+        else if (typeof voiceLaneRaw === "number") voiceLaneCount = Math.floor(voiceLaneRaw);
+        if (!Number.isFinite(voiceLaneCount) || voiceLaneCount <= 0) voiceLaneCount = laneCount;
+        voiceLaneCount = Math.max(1, Math.min(laneCount, voiceLaneCount));
+
+        let anySolo = false;
+        for (let i = 0; i < laneList.length; i++) {
+          const lane = laneList[i];
+          if (!lane || typeof lane !== "object") continue;
+          if (lane.enabled !== "true") {
+            lane.enabled = "true";
+            repairs++;
+          }
+          if (typeof lane.mute !== "string" || (lane.mute !== "true" && lane.mute !== "false")) {
+            lane.mute = "false";
+            repairs++;
+          }
+          if (typeof lane.solo !== "string" || (lane.solo !== "true" && lane.solo !== "false")) {
+            lane.solo = "false";
+            repairs++;
+          }
+          if (lane.solo === "true") anySolo = true;
+          const laneGain = Number(lane.gain);
+          if (!Number.isFinite(laneGain) || laneGain <= 0.001) {
+            lane.gain = "1";
+            repairs++;
+          }
+        }
+        if (anySolo) {
+          for (const lane of laneList) {
+            if (!lane || typeof lane !== "object") continue;
+            if (lane.solo === "true") {
+              lane.solo = "false";
+              repairs++;
+            }
+          }
+        }
 
         let firstGenerator = null;
+        let routedGenerator = null;
         for (const mod of modules) {
           if (!mod || typeof mod !== "object") continue;
           if (!SOUND_GENERATOR_TYPES.has(mod.type)) continue;
@@ -741,10 +2067,14 @@
             mod.output.gain = "1";
             repairs++;
           }
-          if (typeof mod.output.target !== "string" || !/^lane_\d+$/.test(mod.output.target)) {
+          const target = typeof mod.output.target === "string" ? mod.output.target : "";
+          const m = /^lane_(\d+)$/.exec(target);
+          const laneIdx = m ? Number(m[1]) : -1;
+          if (!m || laneIdx < 0 || laneIdx >= voiceLaneCount) {
             mod.output.target = "lane_0";
             repairs++;
           }
+          if (!routedGenerator && truthy(mod.output.send_enabled, true)) routedGenerator = mod;
         }
 
         if (!firstGenerator && modules.length) {
@@ -755,20 +2085,90 @@
           }
         }
 
+        if (!routedGenerator && firstGenerator && firstGenerator.output && typeof firstGenerator.output === "object") {
+          firstGenerator.output.send_enabled = "true";
+          firstGenerator.output.target = "lane_0";
+          firstGenerator.output.gain = "1";
+          repairs++;
+        }
+
         return repairs;
+      }
+
+      function collectSnapinModelMap(stateObj) {
+        const out = new Map();
+        for (const row of iterLaneSnapins(stateObj)) {
+          for (const snap of row.snapins) {
+            const id = snap?.instance_id;
+            const model = snap?.state?.model;
+            if (typeof id === "string" && /^\d+$/.test(id) && model && typeof model === "object") out.set(id, model);
+          }
+        }
+        return out;
+      }
+
+      function resolvePathEntries(root, entries) {
+        let node = root;
+        for (const rawEntry of entries) {
+          if (node === null || node === undefined) return undefined;
+          if (Array.isArray(node)) {
+            const idx = typeof rawEntry === "number" ? rawEntry : Number(rawEntry);
+            if (!Number.isInteger(idx) || idx < 0 || idx >= node.length) return undefined;
+            node = node[idx];
+            continue;
+          }
+          const key = String(rawEntry);
+          if (typeof node !== "object" || !(key in node)) return undefined;
+          node = node[key];
+        }
+        return node;
+      }
+
+      function modulationTargetRoot(stateObj, target, snapinModelMap) {
+        if (!target || typeof target !== "object") return null;
+        const module = target.module;
+        if (typeof module === "string" && /^\d+$/.test(module)) return snapinModelMap.get(module) || null;
+        return stateObj?.model || null;
+      }
+
+      function modulationReferencesValidModule(stateObj, entries) {
+        if (!Array.isArray(entries) || entries.length < 3) return true;
+        if (String(entries[0]) !== "voice" || String(entries[1]) !== "modules") return true;
+        const idx = Number(entries[2]);
+        const modules = stateObj?.model?.voice?.modules;
+        if (!Array.isArray(modules) || !Number.isInteger(idx) || idx < 0 || idx >= modules.length) return false;
+        const module = modules[idx];
+        if (!module || typeof module !== "object") return false;
+        if (moduleType(module) === "none") return false;
+        return true;
+      }
+
+      function isValidModulation(stateObj, modulation, snapinModelMap) {
+        if (!modulation || typeof modulation !== "object") return false;
+        const target = modulation.target;
+        const source = modulation.source;
+        if (!target || typeof target !== "object" || !source || typeof source !== "object") return false;
+        const tEntries = target?.path?.entries;
+        const sEntries = source?.path?.entries;
+        if (!Array.isArray(tEntries) || !tEntries.length) return false;
+        if (!Array.isArray(sEntries) || !sEntries.length) return false;
+        if (!modulationReferencesValidModule(stateObj, tEntries)) return false;
+        if (!modulationReferencesValidModule(stateObj, sEntries)) return false;
+        const tRoot = modulationTargetRoot(stateObj, target, snapinModelMap);
+        if (!tRoot) return false;
+        if (resolvePathEntries(tRoot, tEntries) === undefined) return false;
+        const sRoot = stateObj?.model || null;
+        if (!sRoot) return false;
+        if (resolvePathEntries(sRoot, sEntries) === undefined) return false;
+        return true;
       }
 
       function sanitizeModulations(stateObj) {
         const mods = stateObj?.model?.globals?.modulations;
         if (!Array.isArray(mods)) return 0;
         const before = mods.length;
-        stateObj.model.globals.modulations = mods.filter((m) => {
-          if (!m || typeof m !== "object") return false;
-          const t = m.target;
-          if (!t || typeof t !== "object") return false;
-          if (!t.path || typeof t.path !== "string") return false;
-          return true;
-        });
+        const snapinModelMap = collectSnapinModelMap(stateObj);
+        stateObj.model.globals.modulations = mods.filter((modulation) => isValidModulation(stateObj, modulation, snapinModelMap));
         return before - stateObj.model.globals.modulations.length;
       }
 
@@ -884,19 +2284,62 @@
         return { name: `${name}.phaseplant`, blob, modeLabel };
       }
 
+      function runDiffusionPass(stateObj, rng, amount, enumPool, donorStates, preserveSimilarity) {
+        let changes = 0;
+        changes += mutateState(stateObj, rng, amount, enumPool, true, preserveSimilarity);
+        changes += mutateActiveGeneratorParameters(stateObj, rng, amount, enumPool, true);
+        changes += mutateGeneratorTypes(stateObj, rng, amount, donorStates, enumPool);
+        changes += mutateGlobalModulationAmounts(stateObj, rng, amount, true);
+        changes += diffuseLaneFxAndLfo(stateObj, rng, amount, donorStates, preserveSimilarity);
+        return changes;
+      }
+
       async function generateDiffusion(count, amount, seedText) {
         const selected = selectedUploaded();
         if (selected.length !== 1) throw new Error("Select exactly 1 uploaded preset for Diffusion.");
         const basePreset = selected[0];
-        const allGuideStates = state.uploaded.map((p) => p.state).concat(state.internal.map((p) => p.state));
-        const enumPool = buildEnumPool(allGuideStates.length ? allGuideStates : [basePreset.state]);
+        const guideStates = state.uploaded.map((p) => p.state).concat(state.internal.map((p) => p.state));
+        const donorStates = guideStates.filter((st) => st !== basePreset.state);
+        const enumPool = buildEnumPool(guideStates.length ? guideStates : [basePreset.state]);
+        const referenceModel = buildReferenceModel(guideStates.length ? guideStates : [basePreset.state]);
+        const protectedSwitches = captureProtectedSwitches(basePreset.state);
+        const generatorGuard = captureGeneratorIngredientGuard(basePreset.state);
+        const allowedMasterPitch = captureMasterPitchModulationSignatures(basePreset.state);
+        const preserveSimilarity = Math.max(0.35, 0.9 - 0.45 * amount);
         const rng = createRng(seedText);
         const outputs = [];
         for (let i = 0; i < count; i++) {
-          const st = deepClone(basePreset.state);
-          mutateState(st, rng, amount, enumPool, true);
-          sanitizeModulations(st);
-          applyAudibilitySafety(st);
+          let st = deepClone(basePreset.state);
+          let changes = 0;
+          if (donorStates.length && amount >= 0.18) {
+            const donors = sample(rng, donorStates, Math.min(donorStates.length, 2));
+            changes += crossoverState(st, donors, rng, 0.18 + 0.35 * amount, enumPool);
+          }
+          changes += runDiffusionPass(st, rng, amount, enumPool, donorStates, preserveSimilarity);
+          let delta = countChangedLeafValues(basePreset.state, st);
+          const targetDelta = Math.max(12, Math.round(42 * amount));
+          let attempts = 0;
+          while (delta < targetDelta && attempts < 2) {
+            attempts++;
+            const boostAmount = Math.min(1, Math.max(amount + 0.2 * attempts, 0.55));
+            const boostSimilarity = Math.max(0.2, preserveSimilarity - 0.22 * attempts);
+            changes += runDiffusionPass(st, rng, boostAmount, enumPool, donorStates, boostSimilarity);
+            delta = countChangedLeafValues(basePreset.state, st);
+          }
+          if (delta < targetDelta && amount >= 0.35) {
+            const synth = synthesizeRandomState(basePreset.state, referenceModel, enumPool, rng, Math.max(0.35, amount));
+            const synthDelta = countChangedLeafValues(basePreset.state, synth.state);
+            if (synthDelta > delta) {
+              st = synth.state;
+              changes += synth.changed;
+            }
+          }
+          if (changes <= 0) runDiffusionPass(st, rng, Math.min(1, amount + 0.28), enumPool, donorStates, Math.max(0.2, preserveSimilarity - 0.2));
+          restoreProtectedSwitches(st, protectedSwitches);
+          enforceGeneratorIngredientGuard(st, generatorGuard);
+          sanitizeStateForOutput(st, enumPool);
+          applyOutputAudibilitySafety(st);
+          removeNewMasterPitchModulations(st, allowedMasterPitch);
           const outName = uniqueName(basePreset.name);
           stampMetadata(st, "diffusion", outName);
           const blob = await buildPhaseplantBlob(st, basePreset.assets);
@@ -908,19 +2351,62 @@
       async function generateFusion(count, mixRate, amount, seedText) {
         const selected = selectedUploaded();
         if (selected.length < 2) throw new Error("Select at least 2 uploaded presets for Fusion.");
-        const enumPool = buildEnumPool(selected.map((p) => p.state));
+        const guideStates = selected.map((p) => p.state).concat(state.internal.map((p) => p.state));
+        const enumPool = buildEnumPool(guideStates.length ? guideStates : selected.map((p) => p.state));
         const mergedAssets = mergeAssets(selected);
+        const referenceModel = buildReferenceModel(guideStates.length ? guideStates : selected.map((p) => p.state));
         const rng = createRng(seedText);
         const outputs = [];
+        const fusedBaseName = mashNames(selected.map((p) => p.name));
         for (let i = 0; i < count; i++) {
           const basePreset = choice(rng, selected);
           const donors = selected.filter((p) => p !== basePreset);
-          const st = deepClone(basePreset.state);
-          crossoverState(st, donors.map((d) => d.state), rng, mixRate, enumPool);
-          mutateState(st, rng, amount, enumPool, false);
-          sanitizeModulations(st);
-          applyAudibilitySafety(st);
-          const outName = uniqueName(mashNames(selected.map((p) => p.name)));
+          const donorStates = donors.map((d) => d.state);
+          let st = deepClone(basePreset.state);
+          const protectedSwitches = captureProtectedSwitches(basePreset.state);
+          const generatorGuard = captureGeneratorIngredientGuard(basePreset.state);
+          const allowedMasterPitch = captureMasterPitchModulationSignatures(basePreset.state);
+          const preserveSimilarity = Math.max(0.2, 0.78 - 0.35 * amount);
+          let changes = 0;
+          if (donorStates.length) changes += crossoverState(st, donorStates, rng, mixRate, enumPool);
+          changes += runDiffusionPass(st, rng, Math.max(0.16, amount), enumPool, donorStates, preserveSimilarity);
+          changes += mutateState(st, rng, Math.max(0.10, amount), enumPool, false, preserveSimilarity * 0.4);
+          if (donorStates.length && amount > 0.15) {
+            changes += catalyzeExpandStructure(st, donorStates, rng, Math.max(0.08, amount * 0.35));
+          }
+
+          let delta = countChangedLeafValues(basePreset.state, st);
+          const targetDelta = Math.max(20, Math.round(24 + 24 * mixRate + 28 * amount));
+          let attempts = 0;
+          while (delta < targetDelta && attempts < 2) {
+            attempts++;
+            const boostMix = Math.min(1, mixRate + 0.14 * attempts);
+            const boostAmount = Math.min(1, amount + 0.16 * attempts);
+            if (donorStates.length) changes += crossoverState(st, donorStates, rng, boostMix, enumPool);
+            changes += runDiffusionPass(st, rng, boostAmount, enumPool, donorStates, Math.max(0.12, preserveSimilarity - 0.18 * attempts));
+            changes += mutateState(st, rng, boostAmount, enumPool, false, Math.max(0, preserveSimilarity - 0.25 * attempts));
+            delta = countChangedLeafValues(basePreset.state, st);
+          }
+          if (delta < targetDelta && amount >= 0.30) {
+            const synth = synthesizeRandomState(basePreset.state, referenceModel, enumPool, rng, Math.min(1, 0.35 + 0.45 * amount));
+            const synthDelta = countChangedLeafValues(basePreset.state, synth.state);
+            if (synthDelta > delta) {
+              const replacement = synth.state;
+              if (donorStates.length) crossoverState(replacement, donorStates, rng, Math.min(1, mixRate + 0.08), enumPool);
+              changes += runDiffusionPass(replacement, rng, Math.max(0.2, amount), enumPool, donorStates, Math.max(0.15, preserveSimilarity - 0.15));
+              changes += catalyzeExpandStructure(replacement, donorStates.length ? donorStates : [basePreset.state], rng, Math.max(0.1, amount * 0.4));
+              const replacedDelta = countChangedLeafValues(basePreset.state, replacement);
+              st = replacedDelta >= synthDelta ? replacement : synth.state;
+              changes += synth.changed;
+            }
+          }
+          if (changes <= 0) runDiffusionPass(st, rng, Math.min(1, amount + 0.28), enumPool, donorStates, Math.max(0.12, preserveSimilarity - 0.2));
+          restoreProtectedSwitches(st, protectedSwitches);
+          enforceGeneratorIngredientGuard(st, generatorGuard, 0.2);
+          sanitizeStateForOutput(st, enumPool);
+          applyOutputAudibilitySafety(st);
+          removeNewMasterPitchModulations(st, allowedMasterPitch);
+          const outName = uniqueName(fusedBaseName);
           stampMetadata(st, "fusion", outName);
           const blob = await buildPhaseplantBlob(st, mergedAssets);
           outputs.push(makeOutputItem(outName, blob, "Fusion"));
@@ -941,23 +2427,52 @@
         if (!pool.length) {
           throw new Error("No source templates available for Catalyze.");
         }
-        const enumPool = buildEnumPool(pool.map((p) => p.state));
+        const poolStates = pool.map((p) => p.state);
+        const enumPool = buildEnumPool(poolStates);
+        const referenceModel = buildReferenceModel(poolStates);
         const rng = createRng(seedText);
         const outputs = [];
         for (let i = 0; i < count; i++) {
           const basePreset = choice(rng, pool);
-          const donorTake = Math.max(1, Math.min(pool.length, randInt(rng, 1, 4)));
-          const donors = sample(rng, pool.filter((p) => p !== basePreset), donorTake);
-          const st = deepClone(basePreset.state);
-          if (donors.length) {
-            crossoverState(st, donors.map((d) => d.state), rng, 0.2 + 0.55 * complexity, enumPool);
+          const donorMax = Math.min(4, Math.max(1, pool.length - 1));
+          const donorTake = donorMax > 0 ? randInt(rng, 1, donorMax) : 0;
+          const donorPresets = sample(rng, pool.filter((p) => p !== basePreset), donorTake);
+          const donorStates = donorPresets.map((d) => d.state);
+          const protectedSwitches = captureProtectedSwitches(basePreset.state);
+          const generatorGuard = captureGeneratorIngredientGuard(basePreset.state);
+          const allowedMasterPitch = captureMasterPitchModulationSignatures(basePreset.state);
+          const synthesized = synthesizeRandomState(basePreset.state, referenceModel, enumPool, rng, complexity);
+          const st = synthesized.state;
+          let changes = synthesized.changed;
+          if (donorStates.length) changes += crossoverState(st, donorStates, rng, 0.2 + 0.55 * complexity, enumPool);
+          const preserveSimilarity = Math.max(0.1, 0.65 - 0.45 * complexity);
+          changes += mutateState(st, rng, 0.25 + 0.75 * complexity, enumPool, false, preserveSimilarity);
+          changes += mutateActiveGeneratorParameters(st, rng, 0.2 + 0.75 * complexity, enumPool, false);
+          changes += mutateGeneratorTypes(st, rng, 0.12 + 0.55 * complexity, donorStates, enumPool);
+          changes += mutateGlobalModulationAmounts(st, rng, 0.2 + 0.75 * complexity, false);
+          changes += diffuseLaneFxAndLfo(st, rng, 0.2 + 0.75 * complexity, donorStates, preserveSimilarity);
+          changes += catalyzeExpandStructure(st, donorStates.length ? donorStates : [basePreset.state], rng, complexity);
+          const targetDelta = Math.max(16, Math.round(28 + 46 * complexity));
+          let delta = countChangedLeafValues(basePreset.state, st);
+          let attempts = 0;
+          while (delta < targetDelta && attempts < 2) {
+            attempts++;
+            const boost = Math.min(1, 0.5 + 0.45 * complexity + 0.2 * attempts);
+            changes += mutateState(st, rng, boost, enumPool, false, Math.max(0, preserveSimilarity - 0.25 * attempts));
+            if (donorStates.length) changes += crossoverState(st, donorStates, rng, Math.min(1, 0.35 + 0.45 * complexity), enumPool);
+            changes += diffuseLaneFxAndLfo(st, rng, boost, donorStates, Math.max(0.1, preserveSimilarity - 0.2 * attempts));
+            changes += catalyzeExpandStructure(st, donorStates.length ? donorStates : [basePreset.state], rng, Math.min(1, complexity + 0.15 * attempts));
+            delta = countChangedLeafValues(basePreset.state, st);
           }
-          mutateState(st, rng, 0.22 + 0.78 * complexity, enumPool, false);
-          sanitizeModulations(st);
-          applyAudibilitySafety(st);
+          if (changes <= 0) mutateState(st, rng, 0.65, enumPool, false, 0);
+          restoreProtectedSwitches(st, protectedSwitches);
+          enforceGeneratorIngredientGuard(st, generatorGuard, 0.2);
+          sanitizeStateForOutput(st, enumPool);
+          applyRandomAudibilitySafety(st);
+          removeNewMasterPitchModulations(st, allowedMasterPitch);
           const outName = uniqueName("random");
           stampMetadata(st, "catalyze", outName);
-          const blob = await buildPhaseplantBlob(st, basePreset.assets);
+          const blob = await buildPhaseplantBlob(st, mergeAssets([basePreset, ...donorPresets]));
           outputs.push(makeOutputItem(outName, blob, "Catalyze"));
         }
         return outputs;
@@ -993,11 +2508,13 @@
       function clearDownloads() {
         for (const u of state.objectUrls) URL.revokeObjectURL(u);
         state.objectUrls.length = 0;
+        state.generated.length = 0;
         ui.downloads.innerHTML = "";
       }
 
       function appendDownloads(items) {
         for (const item of items) {
+          state.generated.push(item);
           const url = URL.createObjectURL(item.blob);
           state.objectUrls.push(url);
           const row = document.createElement("div");
@@ -1012,6 +2529,29 @@
           row.appendChild(a);
           ui.downloads.prepend(row);
         }
+      }
+
+      async function downloadAllGenerated() {
+        if (!state.generated.length) {
+          setStatus(ui.runStatus, "Nothing to download yet.", "warn");
+          return;
+        }
+        const counts = new Map();
+        for (const item of state.generated) {
+          const clean = cleanStem(item.name).replace(/\.phaseplant$/i, "");
+          const n = (counts.get(clean.toLowerCase()) || 0) + 1;
+          counts.set(clean.toLowerCase(), n);
+          const fileName = n === 1 ? `${clean}.phaseplant` : `${clean}${n}.phaseplant`;
+          const url = URL.createObjectURL(item.blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 30000);
+        }
+        setStatus(ui.runStatus, `Downloaded ${state.generated.length} generated preset(s).`, "ok");
       }
 
       function renderPresetList() {
@@ -1063,25 +2603,27 @@
         if (bad) setStatus(ui.importStatus, `Loaded ${ok}, skipped ${bad} invalid/non-editable preset(s).`, "warn");
       }
 
+      const EMBEDDED_INTERNAL_TEMPLATES = [
+        { name: 'analog glitcher.phaseplant', b64: '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' },
+        { name: 'phase base.phaseplant', b64: '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' },
+        { name: 'wave base.phaseplant', b64: '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' },
+        { name: 'lfo base.phaseplant', b64: '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' },
+      ];
+
+      function base64ToArrayBuffer(b64) {
+        const raw = atob(b64);
+        const out = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+        return out.buffer;
+      }
+
       async function loadInternalTemplates() {
-        const names = [
-          "analog glitcher.phaseplant",
-          "phase base.phaseplant",
-          "wave base.phaseplant",
-          "lfo base.phaseplant"
-        ];
         const loaded = [];
         let skipped = 0;
-        for (const name of names) {
-          const rel = `PhaseLab/assets/internal_templates/${encodeURIComponent(name)}`;
+        for (const item of EMBEDDED_INTERNAL_TEMPLATES) {
           try {
-            const res = await fetch(rel, { cache: "no-cache" });
-            if (!res.ok) {
-              skipped++;
-              continue;
-            }
-            const buf = await res.arrayBuffer();
-            const preset = await parsePhaseplant(name, buf, "internal");
+            const buf = base64ToArrayBuffer(item.b64);
+            const preset = await parsePhaseplant(item.name, buf, "internal");
             loaded.push(preset);
           } catch (_err) {
             skipped++;
@@ -1091,10 +2633,9 @@
         if (loaded.length) {
           setStatus(ui.importStatus, `Internal templates ready: ${loaded.length}. Upload presets to add more source material.`, "ok");
         } else {
-          setStatus(ui.importStatus, `Internal templates unavailable (${skipped} missing). Upload presets to continue.`, "warn");
+          setStatus(ui.importStatus, `Embedded internal templates unavailable (${skipped} invalid). Upload presets to continue.`, "warn");
         }
       }
-
       function bindTabs() {
         ui.tabs.forEach((btn) => {
           btn.addEventListener("click", () => {
@@ -1104,6 +2645,15 @@
             ui.modes.forEach((m) => m.classList.toggle("active", m.id === `mode-${mode}`));
           });
         });
+      }
+
+      function ensureLogoFallback() {
+        if (!ui.brandLogo || !ui.logoWrap) return;
+        const fallback = () => {
+          ui.logoWrap.textContent = "PL";
+        };
+        ui.brandLogo.addEventListener("error", fallback, { once: true });
+        if (ui.brandLogo.complete && ui.brandLogo.naturalWidth === 0) fallback();
       }
 
       function bindSliders() {
@@ -1147,6 +2697,15 @@
           setStatus(ui.importStatus, `Cleared uploaded presets. Internal templates: ${state.internal.length}.`, "warn");
         });
 
+        ui.downloadAllBtn.addEventListener("click", () => {
+          downloadAllGenerated();
+        });
+
+        ui.clearGeneratedBtn.addEventListener("click", () => {
+          clearDownloads();
+          setStatus(ui.runStatus, "Cleared generated preset downloads.", "warn");
+        });
+
         ui.runDiffusion.addEventListener("click", () => runWithGuard("Diffusion", async () => {
           const count = validateCount(ui.diffCount);
           const amount = Math.max(0, Math.min(1, Number(ui.diffAmount.value)));
@@ -1173,6 +2732,7 @@
       }
 
       bindTabs();
+      ensureLogoFallback();
       bindSliders();
       bindActions();
       renderPresetList();
