@@ -1,0 +1,1183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PhaseLab Web</title>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #121a25;
+      --panel-2: #182331;
+      --line: #2a3a4f;
+      --text: #dbe8ff;
+      --muted: #8aa0bf;
+      --accent: #6ddf5b;
+      --warn: #e5b84b;
+      --danger: #e45d5d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at 10% -10%, #1a2a3e 0%, var(--bg) 42%);
+      color: var(--text);
+      font-family: "Helvetica Neue", "Segoe UI", sans-serif;
+    }
+    .app {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 18px;
+      min-height: 100vh;
+    }
+    .top {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .logo {
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      border: 2px solid var(--accent);
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+      color: #eaffef;
+      background: linear-gradient(145deg, #1b2c21, #102a17);
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.45rem;
+      letter-spacing: 0.02em;
+    }
+    .subtitle {
+      color: var(--muted);
+      margin-top: 2px;
+      font-size: 0.95rem;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 14px;
+    }
+    .card {
+      background: linear-gradient(160deg, var(--panel), var(--panel-2));
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+    }
+    .card h2 {
+      margin: 0 0 10px 0;
+      font-size: 1rem;
+      color: #e8f2ff;
+    }
+    .hint {
+      color: var(--muted);
+      font-size: 0.88rem;
+      line-height: 1.35;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .btn {
+      background: #243549;
+      color: var(--text);
+      border: 1px solid #30435a;
+      border-radius: 8px;
+      padding: 8px 10px;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    .btn:hover { background: #2b4058; }
+    .btn.accent {
+      background: #225a2d;
+      border-color: #2f7c3c;
+      color: #ecfff0;
+    }
+    .btn.accent:hover { background: #2d6b39; }
+    input[type="number"], input[type="text"] {
+      background: #0f1722;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 7px 8px;
+      min-width: 90px;
+    }
+    input[type="range"] {
+      width: 260px;
+      accent-color: var(--accent);
+    }
+    .status {
+      margin-top: 8px;
+      font-size: 0.9rem;
+      color: var(--accent);
+      min-height: 1.3rem;
+    }
+    .status.warn { color: var(--warn); }
+    .status.error { color: var(--danger); }
+
+    .preset-list {
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      max-height: 430px;
+      overflow: auto;
+      background: #0e1621;
+    }
+    .preset-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 10px;
+      border-bottom: 1px solid #1c2a3a;
+      cursor: pointer;
+      user-select: none;
+      font-size: 0.9rem;
+    }
+    .preset-item:last-child { border-bottom: none; }
+    .preset-item:hover { background: #182635; }
+    .preset-item.sel {
+      background: #2f8f43;
+      color: #ecfff0;
+    }
+    .badge {
+      font-size: 0.72rem;
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid #3a4d66;
+      color: var(--muted);
+    }
+
+    .mode-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .tab {
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #182332;
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    .tab.active {
+      background: #1f2d3d;
+      color: var(--accent);
+      border-color: #2a4b33;
+    }
+    .mode {
+      display: none;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px;
+      background: #101925;
+    }
+    .mode.active { display: block; }
+    .field { margin: 8px 0; }
+    .field label {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+    .split {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 8px;
+    }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    .output {
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #0f1721;
+      padding: 10px;
+      min-height: 120px;
+    }
+    .output h3 {
+      margin: 0 0 8px;
+      font-size: 0.95rem;
+      color: var(--muted);
+    }
+    .downloads {
+      display: grid;
+      gap: 6px;
+      max-height: 260px;
+      overflow: auto;
+    }
+    .dl {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 8px;
+      border: 1px solid #27374c;
+      border-radius: 8px;
+      font-size: 0.88rem;
+      background: #121d2a;
+    }
+    .dl a {
+      color: #9ed5ff;
+      text-decoration: none;
+    }
+    .dl a:hover { text-decoration: underline; }
+
+    @media (max-width: 980px) {
+      .grid { grid-template-columns: 1fr; }
+      input[type="range"] { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="top">
+      <div class="logo">PL</div>
+      <div>
+        <h1>PhaseLab Web</h1>
+        <div class="subtitle">Diffusion + Fusion + Catalyze + Anomalize in a pure static HTML app</div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>Source Presets</h2>
+        <div class="row">
+          <input id="fileInput" type="file" accept=".phaseplant" multiple />
+          <button class="btn" id="clearBtn" type="button">Clear</button>
+        </div>
+        <div class="hint" style="margin-top:8px;">
+          Import editable <span class="mono">.phaseplant</span> files. Browser mode cannot write folders directly,
+          so generated presets are downloadable files. Factory/binary presets are not directly editable in browser mode.
+        </div>
+        <div class="status" id="importStatus">Loading internal templates...</div>
+        <div class="preset-list" id="presetList"></div>
+        <div class="hint" style="margin-top:8px;">
+          Click presets to toggle selection. Diffusion uses 1. Fusion uses 2+. Catalyze can run from internal templates.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="mode-tabs" id="modeTabs">
+          <button class="tab active" data-mode="diffusion" type="button">Diffusion</button>
+          <button class="tab" data-mode="fusion" type="button">Fusion</button>
+          <button class="tab" data-mode="catalyze" type="button">Catalyze</button>
+          <button class="tab" data-mode="anomalize" type="button">Anomalize</button>
+        </div>
+
+        <section class="mode active" id="mode-diffusion">
+          <div class="hint">Diffusion morphs one preset by mutating safe parameter values.</div>
+          <div class="field split">
+            <div>
+              <label for="diffAmount">Diffusion Amount</label>
+              <input id="diffAmount" type="range" min="0" max="1" step="0.01" value="0.2" />
+            </div>
+            <div class="mono" id="diffAmountVal">0.20</div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="diffSeed">Seed (optional)</label>
+              <input id="diffSeed" type="text" placeholder="random" />
+            </div>
+            <div class="field">
+              <label for="diffCount">How Many</label>
+              <input id="diffCount" type="number" min="1" max="500" value="1" />
+            </div>
+          </div>
+          <button class="btn accent" id="runDiffusion" type="button">Diffuse</button>
+        </section>
+
+        <section class="mode" id="mode-fusion">
+          <div class="hint">Fusion blends multiple presets into a hybrid.</div>
+          <div class="field split">
+            <div>
+              <label for="fusionMix">Mix Rate</label>
+              <input id="fusionMix" type="range" min="0" max="1" step="0.01" value="0.35" />
+            </div>
+            <div class="mono" id="fusionMixVal">0.35</div>
+          </div>
+          <div class="field split">
+            <div>
+              <label for="fusionAmount">Fusion Amount</label>
+              <input id="fusionAmount" type="range" min="0" max="1" step="0.01" value="0.10" />
+            </div>
+            <div class="mono" id="fusionAmountVal">0.10</div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="fusionSeed">Seed (optional)</label>
+              <input id="fusionSeed" type="text" placeholder="random" />
+            </div>
+            <div class="field">
+              <label for="fusionCount">How Many</label>
+              <input id="fusionCount" type="number" min="1" max="500" value="1" />
+            </div>
+          </div>
+          <button class="btn accent" id="runFusion" type="button">Fuse</button>
+        </section>
+
+        <section class="mode" id="mode-catalyze">
+          <div class="hint">Catalyze generates smart presets and can optionally be informed by your uploaded presets.</div>
+          <div class="field split">
+            <div>
+              <label for="catComplexity">Complexity</label>
+              <input id="catComplexity" type="range" min="0" max="1" step="0.01" value="0.5" />
+            </div>
+            <div class="mono" id="catComplexityVal">0.50</div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="catSeed">Seed (optional)</label>
+              <input id="catSeed" type="text" placeholder="random" />
+            </div>
+            <div class="field">
+              <label for="catCount">How Many</label>
+              <input id="catCount" type="number" min="1" max="500" value="1" />
+            </div>
+          </div>
+          <div class="field">
+            <label><input id="catGuided" type="checkbox" /> Use Existing Presets As Structure Guidance</label>
+          </div>
+          <button class="btn accent" id="runCatalyze" type="button">Catalyze</button>
+        </section>
+
+        <section class="mode" id="mode-anomalize">
+          <div class="hint">Anomalize is surprise mode. Every output randomly runs Diffusion, Fusion, or Catalyze.</div>
+          <div class="field">
+            <label for="anomCount">How Many</label>
+            <input id="anomCount" type="number" min="1" max="500" value="1" />
+          </div>
+          <button class="btn accent" id="runAnomalize" type="button">Anomalize</button>
+        </section>
+
+        <div class="status" id="runStatus">Ready.</div>
+        <div class="output">
+          <h3>Generated Downloads</h3>
+          <div class="downloads" id="downloads"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const DEFAULT_ANALOG_WAVEFORMS = ["sine", "saw", "square", "triangle", "pulse", "noise"];
+      const ENUM_SUFFIXES = [
+        ".analog.waveform",
+        ".wavetable.wavetable_name",
+        ".unison.mode",
+        ".noise.type",
+        ".distortion.type",
+        ".nonlinear_filter.type",
+        ".nonlinear_filter.dirt_type",
+        ".filter.type",
+        ".modulators[].trigger.note_trigger",
+        ".rate.sync_mode",
+        ".rate.rate_denominator",
+        ".granular.rate_denominator"
+      ];
+      const SKIP_PATH_FRAGMENTS = [
+        ".path", ".resource", ".sample_name", ".wavetable_name", ".preset_path",
+        ".group_name", ".version", ".schema", ".build", ".author", ".comment", ".name"
+      ];
+      const SOUND_GENERATOR_TYPES = new Set([
+        "analog_generator", "wavetable_generator", "sampler_generator",
+        "granular_generator", "noise_generator", "oscillator"
+      ]);
+
+      const ui = {
+        fileInput: document.getElementById("fileInput"),
+        clearBtn: document.getElementById("clearBtn"),
+        presetList: document.getElementById("presetList"),
+        importStatus: document.getElementById("importStatus"),
+        runStatus: document.getElementById("runStatus"),
+        downloads: document.getElementById("downloads"),
+        tabs: [...document.querySelectorAll(".tab")],
+        modes: [...document.querySelectorAll(".mode")],
+        diffAmount: document.getElementById("diffAmount"),
+        diffAmountVal: document.getElementById("diffAmountVal"),
+        diffSeed: document.getElementById("diffSeed"),
+        diffCount: document.getElementById("diffCount"),
+        fusionMix: document.getElementById("fusionMix"),
+        fusionMixVal: document.getElementById("fusionMixVal"),
+        fusionAmount: document.getElementById("fusionAmount"),
+        fusionAmountVal: document.getElementById("fusionAmountVal"),
+        fusionSeed: document.getElementById("fusionSeed"),
+        fusionCount: document.getElementById("fusionCount"),
+        catComplexity: document.getElementById("catComplexity"),
+        catComplexityVal: document.getElementById("catComplexityVal"),
+        catSeed: document.getElementById("catSeed"),
+        catCount: document.getElementById("catCount"),
+        catGuided: document.getElementById("catGuided"),
+        anomCount: document.getElementById("anomCount"),
+        runDiffusion: document.getElementById("runDiffusion"),
+        runFusion: document.getElementById("runFusion"),
+        runCatalyze: document.getElementById("runCatalyze"),
+        runAnomalize: document.getElementById("runAnomalize")
+      };
+
+      const state = {
+        uploaded: [],
+        internal: [],
+        selected: new Set(),
+        nameCounts: new Map(),
+        objectUrls: []
+      };
+
+      function setStatus(el, text, kind = "ok") {
+        el.textContent = text;
+        el.classList.remove("warn", "error");
+        if (kind === "warn") el.classList.add("warn");
+        if (kind === "error") el.classList.add("error");
+      }
+
+      function hashString(text) {
+        let h = 2166136261;
+        for (let i = 0; i < text.length; i++) {
+          h ^= text.charCodeAt(i);
+          h = Math.imul(h, 16777619);
+        }
+        return h >>> 0;
+      }
+
+      function mulberry32(seed) {
+        let t = seed >>> 0;
+        return function() {
+          t += 0x6D2B79F5;
+          let r = Math.imul(t ^ (t >>> 15), 1 | t);
+          r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+          return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+
+      function createRng(seedText = "") {
+        const seed = String(seedText || "").trim();
+        if (!seed) return Math.random;
+        return mulberry32(hashString(seed));
+      }
+
+      function randInt(rng, a, b) {
+        return a + Math.floor(rng() * (b - a + 1));
+      }
+
+      function choice(rng, list) {
+        return list[Math.floor(rng() * list.length)];
+      }
+
+      function shuffleInPlace(rng, arr) {
+        for (let i = arr.length - 1; i > 0; i--) {
+          const j = Math.floor(rng() * (i + 1));
+          [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+        return arr;
+      }
+
+      function sample(rng, list, n) {
+        if (n >= list.length) return list.slice();
+        const copy = list.slice();
+        shuffleInPlace(rng, copy);
+        return copy.slice(0, n);
+      }
+
+      function deepClone(obj) {
+        if (typeof structuredClone === "function") return structuredClone(obj);
+        return JSON.parse(JSON.stringify(obj));
+      }
+
+      function normalizePath(path) {
+        return path.replace(/\[\d+\]/g, "[]");
+      }
+
+      function valueKind(v) {
+        if (v === "true" || v === "false") return "bool";
+        if (/^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(v)) return "num";
+        return "str";
+      }
+
+      function isWavetableFramePath(path) {
+        return normalizePath(path).toLowerCase().endsWith(".wavetable.frame");
+      }
+
+      function isEnumPath(path) {
+        const canonical = normalizePath(path).toLowerCase();
+        return ENUM_SUFFIXES.some((s) => canonical.endsWith(s));
+      }
+
+      function isPitchPath(path) {
+        const canonical = normalizePath(path).toLowerCase();
+        return [".pitch", "transpose", "semitone", "detune", "octave", "coarse", "fine_tune", ".tune", ".note", ".keytrack"].some((s) => canonical.includes(s));
+      }
+
+      function isSwitchPath(path) {
+        const canonical = normalizePath(path).toLowerCase();
+        return [".enabled", ".send_enabled", ".mute", ".solo", ".bypass", ".active"].some((s) => canonical.endsWith(s));
+      }
+
+      function isMutationPath(path) {
+        const low = path.toLowerCase();
+        if (isEnumPath(path)) return true;
+        if (SKIP_PATH_FRAGMENTS.some((f) => low.includes(f))) return false;
+        if (low.endsWith(".$type") || low.endsWith(".$id") || low.endsWith(".id")) return false;
+        if (low.includes(".globals.modulations[")) return false;
+        if (low.includes(".lanes[") && (low.endsWith(".solo") || low.endsWith(".mute"))) return false;
+        if (isSwitchPath(path)) return false;
+        if (low.includes(".voice.modules[")) {
+          if (low.endsWith(".type") || low.endsWith(".index")) return false;
+          if (low.includes(".group.")) return false;
+          if (low.endsWith(".output.target")) return false;
+        }
+        return true;
+      }
+
+      function collectLeafRefs(node, path = "", out = [], parent = null, key = null) {
+        if (node === null || node === undefined) return out;
+        if (typeof node === "string" || typeof node === "number" || typeof node === "boolean") {
+          out.push({ parent, key, path, value: node });
+          return out;
+        }
+        if (Array.isArray(node)) {
+          for (let i = 0; i < node.length; i++) {
+            collectLeafRefs(node[i], `${path}[${i}]`, out, node, i);
+          }
+          return out;
+        }
+        if (typeof node === "object") {
+          for (const k of Object.keys(node)) {
+            const next = path ? `${path}.${k}` : k;
+            collectLeafRefs(node[k], next, out, node, k);
+          }
+        }
+        return out;
+      }
+
+      function clamp(path, value) {
+        if (!Number.isFinite(value)) return value;
+        const c = normalizePath(path).toLowerCase();
+        if (c.endsWith(".wavetable.frame")) return Math.max(0, Math.min(256, value));
+        if (c.endsWith(".gain") || c.endsWith(".mix") || c.endsWith(".amount") || c.endsWith(".depth") || c.endsWith(".drive") || c.endsWith(".feedback")) {
+          if (value >= 0 && value <= 1) return Math.max(0, Math.min(1, value));
+        }
+        return value;
+      }
+
+      function formatNum(n, original) {
+        if (!Number.isFinite(n)) return original;
+        const s = n.toFixed(6).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
+        return s === "-0" ? "0" : s;
+      }
+
+      function buildEnumPool(states) {
+        const pool = new Map();
+        for (const st of states) {
+          for (const leaf of collectLeafRefs(st)) {
+            if (typeof leaf.value !== "string") continue;
+            if (!isEnumPath(leaf.path)) continue;
+            if (valueKind(leaf.value) !== "str") continue;
+            const key = normalizePath(leaf.path).toLowerCase();
+            if (!pool.has(key)) pool.set(key, new Set());
+            if (leaf.value.trim()) pool.get(key).add(leaf.value.trim());
+          }
+        }
+        const analogKey = ".analog.waveform";
+        if (!pool.has(analogKey)) pool.set(analogKey, new Set());
+        for (const w of DEFAULT_ANALOG_WAVEFORMS) pool.get(analogKey).add(w);
+        return pool;
+      }
+
+      function enumOptionsForPath(path, enumPool) {
+        const canonical = normalizePath(path).toLowerCase();
+        if (enumPool.has(canonical)) return [...enumPool.get(canonical)];
+        for (const suffix of ENUM_SUFFIXES) {
+          if (canonical.endsWith(suffix) && enumPool.has(suffix)) return [...enumPool.get(suffix)];
+        }
+        return [];
+      }
+
+      function mutateStringValue(path, value, rng, amount, enumPool) {
+        const kind = valueKind(value);
+        if (kind === "bool") {
+          if (rng() < 0.3 + 0.4 * amount) return value === "true" ? "false" : "true";
+          return value;
+        }
+        if (kind === "num") {
+          const isInt = /^[+-]?\d+$/.test(value);
+          if (isInt && !isWavetableFramePath(path)) return value;
+          const base = Number(value);
+          if (!Number.isFinite(base)) return value;
+          let span = Math.max(Math.abs(base) * (0.15 + amount * 0.75), 0.01);
+          if (isWavetableFramePath(path)) span = Math.max(span, 12 + 120 * amount);
+          const delta = (rng() * 2 - 1) * span;
+          let next = clamp(path, base + delta);
+          if (base >= 0) next = Math.max(0, next);
+          return formatNum(next, value);
+        }
+        if (kind === "str" && isEnumPath(path)) {
+          const options = enumOptionsForPath(path, enumPool).filter((x) => x !== value);
+          if (options.length) return choice(rng, options);
+        }
+        return value;
+      }
+
+      function mutateState(stateObj, rng, amount, enumPool, preservePitchLow = false) {
+        let changed = 0;
+        const refs = collectLeafRefs(stateObj);
+        const chanceBase = Math.min(1, amount * 1.3);
+        for (const ref of refs) {
+          if (typeof ref.value !== "string") continue;
+          const p = ref.path;
+          if (!isMutationPath(p)) continue;
+          if (preservePitchLow && amount <= 0.3 && isPitchPath(p)) continue;
+          let chance = chanceBase;
+          if (isWavetableFramePath(p)) chance = Math.max(chance, 0.55 + amount * 0.35);
+          if (isEnumPath(p)) chance = Math.max(chance, 0.35 + amount * 0.2);
+          if (rng() > chance) continue;
+          const next = mutateStringValue(p, ref.value, rng, amount, enumPool);
+          if (next !== ref.value) {
+            ref.parent[ref.key] = next;
+            changed++;
+          }
+        }
+        return changed;
+      }
+
+      function collectDonorValues(states) {
+        const map = new Map();
+        for (const st of states) {
+          for (const leaf of collectLeafRefs(st)) {
+            if (typeof leaf.value !== "string") continue;
+            if (!map.has(leaf.path)) map.set(leaf.path, []);
+            map.get(leaf.path).push(leaf.value);
+          }
+        }
+        return map;
+      }
+
+      function crossoverState(baseState, donorStates, rng, mixRate, enumPool) {
+        if (!donorStates.length) return 0;
+        const donorMap = collectDonorValues(donorStates);
+        let changed = 0;
+        for (const ref of collectLeafRefs(baseState)) {
+          if (typeof ref.value !== "string") continue;
+          if (!isMutationPath(ref.path)) continue;
+          if (rng() > mixRate) continue;
+          const vals = donorMap.get(ref.path);
+          if (!vals || !vals.length) continue;
+          let candidate = choice(rng, vals);
+          if (valueKind(candidate) !== valueKind(ref.value)) continue;
+          if (valueKind(candidate) === "str" && isEnumPath(ref.path)) {
+            const allowed = new Set(enumOptionsForPath(ref.path, enumPool));
+            if (allowed.size && !allowed.has(candidate)) continue;
+          }
+          if (candidate === ref.value && isWavetableFramePath(ref.path)) {
+            candidate = mutateStringValue(ref.path, ref.value, rng, Math.max(0.35, mixRate), enumPool);
+          }
+          if (candidate !== ref.value) {
+            ref.parent[ref.key] = candidate;
+            changed++;
+          }
+        }
+        return changed;
+      }
+
+      function truthy(v, dflt = true) {
+        if (typeof v === "boolean") return v;
+        if (typeof v === "string") {
+          const t = v.trim().toLowerCase();
+          if (t === "true") return true;
+          if (t === "false") return false;
+        }
+        return dflt;
+      }
+
+      function applyAudibilitySafety(stateObj) {
+        let repairs = 0;
+        const model = stateObj && stateObj.model;
+        if (!model || typeof model !== "object") return repairs;
+        const voice = model.voice;
+        const modules = voice && Array.isArray(voice.modules) ? voice.modules : null;
+        if (!modules) return repairs;
+
+        const lanes = Array.isArray(model.lanes) ? model.lanes : [];
+        if (!lanes.length) {
+          model.lanes = [{
+            enabled: "true",
+            mute: "false",
+            solo: "false",
+            gain: "1",
+            snapins: { snapins: [] }
+          }];
+          repairs++;
+        }
+
+        let firstGenerator = null;
+        for (const mod of modules) {
+          if (!mod || typeof mod !== "object") continue;
+          if (!SOUND_GENERATOR_TYPES.has(mod.type)) continue;
+          if (!firstGenerator) firstGenerator = mod;
+          if (!truthy(mod.enabled, true)) {
+            mod.enabled = "true";
+            repairs++;
+          }
+          if (!mod.output || typeof mod.output !== "object") {
+            mod.output = {};
+            repairs++;
+          }
+          if (!truthy(mod.output.send_enabled, true)) {
+            mod.output.send_enabled = "true";
+            repairs++;
+          }
+          const gain = Number(mod.output.gain);
+          if (!Number.isFinite(gain) || gain <= 0.01) {
+            mod.output.gain = "1";
+            repairs++;
+          }
+          if (typeof mod.output.target !== "string" || !/^lane_\d+$/.test(mod.output.target)) {
+            mod.output.target = "lane_0";
+            repairs++;
+          }
+        }
+
+        if (!firstGenerator && modules.length) {
+          for (const mod of modules) {
+            if (!mod || typeof mod !== "object") continue;
+            if (mod.type === "group") continue;
+            mod.enabled = "true";
+          }
+        }
+
+        return repairs;
+      }
+
+      function sanitizeModulations(stateObj) {
+        const mods = stateObj?.model?.globals?.modulations;
+        if (!Array.isArray(mods)) return 0;
+        const before = mods.length;
+        stateObj.model.globals.modulations = mods.filter((m) => {
+          if (!m || typeof m !== "object") return false;
+          const t = m.target;
+          if (!t || typeof t !== "object") return false;
+          if (!t.path || typeof t.path !== "string") return false;
+          return true;
+        });
+        return before - stateObj.model.globals.modulations.length;
+      }
+
+      function stampMetadata(stateObj, modeLabel, presetName) {
+        if (!stateObj.meta || typeof stateObj.meta !== "object") stateObj.meta = {};
+        stateObj.meta.author = "PhaseLab";
+        stateObj.meta.description = `Generated by PhaseLab (${modeLabel}).`;
+        if (stateObj.preset && typeof stateObj.preset === "object") {
+          stateObj.preset.name = presetName;
+        }
+      }
+
+      function cleanStem(raw) {
+        let stem = String(raw || "generated").replace(/\.phaseplant$/i, "").trim();
+        stem = stem.replace(/[\\/]+/g, " ").replace(/\s+/g, " ").replace(/[._\-\s]+$/g, "");
+        return stem || "generated";
+      }
+
+      function uniqueName(base) {
+        const stem = cleanStem(base);
+        const key = stem.toLowerCase();
+        const n = (state.nameCounts.get(key) || 0) + 1;
+        state.nameCounts.set(key, n);
+        return n === 1 ? stem : `${stem}${n}`;
+      }
+
+      function mashNames(names) {
+        const stems = names.map(cleanStem).filter(Boolean);
+        if (!stems.length) return "fused";
+        if (stems.length === 1) return stems[0];
+        const maxLen = Math.max(...stems.map((s) => s.length));
+        const wordLists = stems.map((s) => s.match(/[A-Za-z0-9]+/g) || [s]);
+        const seen = new Set();
+        const out = [];
+        let idx = 0;
+        while (true) {
+          let added = false;
+          for (const words of wordLists) {
+            if (idx >= words.length) continue;
+            const w = words[idx];
+            const k = w.toLowerCase();
+            if (seen.has(k)) continue;
+            const cand = out.length ? `${out.join(" ")} ${w}` : w;
+            if (cand.length <= maxLen) {
+              out.push(w);
+              seen.add(k);
+              added = true;
+            }
+          }
+          if (!added) break;
+          idx++;
+        }
+        let res = out.join(" ").trim() || stems[0].slice(0, maxLen);
+        if (res.length > maxLen) res = res.slice(0, maxLen).trim();
+        return res || stems[0].slice(0, maxLen);
+      }
+
+      async function parsePhaseplant(fileName, arrayBuffer, sourceType = "uploaded") {
+        const zip = await JSZip.loadAsync(arrayBuffer);
+        const stateEntry = zip.file("state.json");
+        if (!stateEntry) throw new Error("Missing state.json");
+        const stateText = await stateEntry.async("string");
+        const parsedState = JSON.parse(stateText);
+        const assets = {};
+        const names = Object.keys(zip.files);
+        for (const name of names) {
+          if (name === "state.json") continue;
+          const entry = zip.files[name];
+          if (!entry || entry.dir) continue;
+          assets[name] = await entry.async("uint8array");
+        }
+        return {
+          id: `${sourceType}:${fileName}:${Date.now()}:${Math.random().toString(16).slice(2)}`,
+          name: cleanStem(fileName),
+          fileName,
+          state: parsedState,
+          assets,
+          sourceType
+        };
+      }
+
+      async function buildPhaseplantBlob(stateObj, assetsObj) {
+        const zip = new JSZip();
+        zip.file("state.json", JSON.stringify(stateObj, null, "\t"));
+        const names = Object.keys(assetsObj || {}).sort();
+        for (const name of names) zip.file(name, assetsObj[name]);
+        return zip.generateAsync({ type: "blob", compression: "DEFLATE" });
+      }
+
+      function mergeAssets(presets) {
+        const merged = {};
+        for (const p of presets) {
+          for (const [name, data] of Object.entries(p.assets || {})) {
+            if (!(name in merged)) merged[name] = data;
+          }
+        }
+        return merged;
+      }
+
+      function selectedUploaded() {
+        return [...state.selected]
+          .map((idx) => state.uploaded[idx])
+          .filter(Boolean);
+      }
+
+      function validateCount(inputEl) {
+        const n = Number(inputEl.value);
+        if (!Number.isFinite(n) || n < 1 || n > 500) throw new Error("How many must be between 1 and 500");
+        return Math.floor(n);
+      }
+
+      function makeOutputItem(name, blob, modeLabel) {
+        return { name: `${name}.phaseplant`, blob, modeLabel };
+      }
+
+      async function generateDiffusion(count, amount, seedText) {
+        const selected = selectedUploaded();
+        if (selected.length !== 1) throw new Error("Select exactly 1 uploaded preset for Diffusion.");
+        const basePreset = selected[0];
+        const allGuideStates = state.uploaded.map((p) => p.state).concat(state.internal.map((p) => p.state));
+        const enumPool = buildEnumPool(allGuideStates.length ? allGuideStates : [basePreset.state]);
+        const rng = createRng(seedText);
+        const outputs = [];
+        for (let i = 0; i < count; i++) {
+          const st = deepClone(basePreset.state);
+          mutateState(st, rng, amount, enumPool, true);
+          sanitizeModulations(st);
+          applyAudibilitySafety(st);
+          const outName = uniqueName(basePreset.name);
+          stampMetadata(st, "diffusion", outName);
+          const blob = await buildPhaseplantBlob(st, basePreset.assets);
+          outputs.push(makeOutputItem(outName, blob, "Diffusion"));
+        }
+        return outputs;
+      }
+
+      async function generateFusion(count, mixRate, amount, seedText) {
+        const selected = selectedUploaded();
+        if (selected.length < 2) throw new Error("Select at least 2 uploaded presets for Fusion.");
+        const enumPool = buildEnumPool(selected.map((p) => p.state));
+        const mergedAssets = mergeAssets(selected);
+        const rng = createRng(seedText);
+        const outputs = [];
+        for (let i = 0; i < count; i++) {
+          const basePreset = choice(rng, selected);
+          const donors = selected.filter((p) => p !== basePreset);
+          const st = deepClone(basePreset.state);
+          crossoverState(st, donors.map((d) => d.state), rng, mixRate, enumPool);
+          mutateState(st, rng, amount, enumPool, false);
+          sanitizeModulations(st);
+          applyAudibilitySafety(st);
+          const outName = uniqueName(mashNames(selected.map((p) => p.name)));
+          stampMetadata(st, "fusion", outName);
+          const blob = await buildPhaseplantBlob(st, mergedAssets);
+          outputs.push(makeOutputItem(outName, blob, "Fusion"));
+        }
+        return outputs;
+      }
+
+      function catalyzePool(guided) {
+        if (guided) {
+          const pool = [...state.internal, ...state.uploaded];
+          return pool;
+        }
+        return state.internal.length ? state.internal.slice() : state.uploaded.slice();
+      }
+
+      async function generateCatalyze(count, complexity, seedText, guided) {
+        const pool = catalyzePool(guided);
+        if (!pool.length) {
+          throw new Error("No source templates available for Catalyze.");
+        }
+        const enumPool = buildEnumPool(pool.map((p) => p.state));
+        const rng = createRng(seedText);
+        const outputs = [];
+        for (let i = 0; i < count; i++) {
+          const basePreset = choice(rng, pool);
+          const donorTake = Math.max(1, Math.min(pool.length, randInt(rng, 1, 4)));
+          const donors = sample(rng, pool.filter((p) => p !== basePreset), donorTake);
+          const st = deepClone(basePreset.state);
+          if (donors.length) {
+            crossoverState(st, donors.map((d) => d.state), rng, 0.2 + 0.55 * complexity, enumPool);
+          }
+          mutateState(st, rng, 0.22 + 0.78 * complexity, enumPool, false);
+          sanitizeModulations(st);
+          applyAudibilitySafety(st);
+          const outName = uniqueName("random");
+          stampMetadata(st, "catalyze", outName);
+          const blob = await buildPhaseplantBlob(st, basePreset.assets);
+          outputs.push(makeOutputItem(outName, blob, "Catalyze"));
+        }
+        return outputs;
+      }
+
+      async function generateAnomalize(count) {
+        const rng = createRng("");
+        const outputs = [];
+        for (let i = 0; i < count; i++) {
+          const available = ["catalyze"];
+          if (state.uploaded.length >= 1) available.push("diffusion");
+          if (state.uploaded.length >= 2) available.push("fusion");
+          const mode = choice(rng, available);
+          if (mode === "diffusion") {
+            state.selected = new Set([randInt(rng, 0, state.uploaded.length - 1)]);
+            renderPresetList();
+            const arr = await generateDiffusion(1, 0.12 + rng() * 0.83, "");
+            outputs.push(...arr);
+          } else if (mode === "fusion") {
+            const pick = sample(rng, state.uploaded.map((_, i) => i), Math.min(state.uploaded.length, randInt(rng, 2, 4)));
+            state.selected = new Set(pick);
+            renderPresetList();
+            const arr = await generateFusion(1, 0.2 + rng() * 0.72, 0.08 + rng() * 0.7, "");
+            outputs.push(...arr);
+          } else {
+            const arr = await generateCatalyze(1, 0.08 + rng() * 0.9, "", rng() < 0.85);
+            outputs.push(...arr);
+          }
+        }
+        return outputs;
+      }
+
+      function clearDownloads() {
+        for (const u of state.objectUrls) URL.revokeObjectURL(u);
+        state.objectUrls.length = 0;
+        ui.downloads.innerHTML = "";
+      }
+
+      function appendDownloads(items) {
+        for (const item of items) {
+          const url = URL.createObjectURL(item.blob);
+          state.objectUrls.push(url);
+          const row = document.createElement("div");
+          row.className = "dl";
+          const left = document.createElement("div");
+          left.textContent = `${item.modeLabel}: ${item.name}`;
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = item.name;
+          a.textContent = "Download";
+          row.appendChild(left);
+          row.appendChild(a);
+          ui.downloads.prepend(row);
+        }
+      }
+
+      function renderPresetList() {
+        ui.presetList.innerHTML = "";
+        if (!state.uploaded.length) {
+          const empty = document.createElement("div");
+          empty.className = "preset-item";
+          empty.style.cursor = "default";
+          empty.textContent = "No uploaded presets yet.";
+          ui.presetList.appendChild(empty);
+          return;
+        }
+        state.uploaded.forEach((p, idx) => {
+          const item = document.createElement("div");
+          item.className = "preset-item" + (state.selected.has(idx) ? " sel" : "");
+          item.addEventListener("click", () => {
+            if (state.selected.has(idx)) state.selected.delete(idx);
+            else state.selected.add(idx);
+            renderPresetList();
+          });
+          const name = document.createElement("span");
+          name.textContent = p.fileName;
+          const badge = document.createElement("span");
+          badge.className = "badge";
+          badge.textContent = "uploaded";
+          item.appendChild(name);
+          item.appendChild(badge);
+          ui.presetList.appendChild(item);
+        });
+      }
+
+      async function loadUploadedFiles(fileList) {
+        const files = [...fileList];
+        if (!files.length) return;
+        let ok = 0;
+        let bad = 0;
+        for (const file of files) {
+          try {
+            const buf = await file.arrayBuffer();
+            const preset = await parsePhaseplant(file.name, buf, "uploaded");
+            state.uploaded.push(preset);
+            ok++;
+          } catch (_err) {
+            bad++;
+          }
+        }
+        renderPresetList();
+        if (ok) setStatus(ui.importStatus, `Loaded ${ok} preset(s). Internal templates: ${state.internal.length}.`, "ok");
+        if (bad) setStatus(ui.importStatus, `Loaded ${ok}, skipped ${bad} invalid/non-editable preset(s).`, "warn");
+      }
+
+      async function loadInternalTemplates() {
+        const names = [
+          "analog glitcher.phaseplant",
+          "phase base.phaseplant",
+          "wave base.phaseplant",
+          "lfo base.phaseplant"
+        ];
+        const loaded = [];
+        let skipped = 0;
+        for (const name of names) {
+          const rel = `PhaseLab/assets/internal_templates/${encodeURIComponent(name)}`;
+          try {
+            const res = await fetch(rel, { cache: "no-cache" });
+            if (!res.ok) {
+              skipped++;
+              continue;
+            }
+            const buf = await res.arrayBuffer();
+            const preset = await parsePhaseplant(name, buf, "internal");
+            loaded.push(preset);
+          } catch (_err) {
+            skipped++;
+          }
+        }
+        state.internal = loaded;
+        if (loaded.length) {
+          setStatus(ui.importStatus, `Internal templates ready: ${loaded.length}. Upload presets to add more source material.`, "ok");
+        } else {
+          setStatus(ui.importStatus, `Internal templates unavailable (${skipped} missing). Upload presets to continue.`, "warn");
+        }
+      }
+
+      function bindTabs() {
+        ui.tabs.forEach((btn) => {
+          btn.addEventListener("click", () => {
+            ui.tabs.forEach((b) => b.classList.remove("active"));
+            btn.classList.add("active");
+            const mode = btn.getAttribute("data-mode");
+            ui.modes.forEach((m) => m.classList.toggle("active", m.id === `mode-${mode}`));
+          });
+        });
+      }
+
+      function bindSliders() {
+        const pairs = [
+          [ui.diffAmount, ui.diffAmountVal],
+          [ui.fusionMix, ui.fusionMixVal],
+          [ui.fusionAmount, ui.fusionAmountVal],
+          [ui.catComplexity, ui.catComplexityVal]
+        ];
+        for (const [inEl, outEl] of pairs) {
+          const sync = () => { outEl.textContent = Number(inEl.value).toFixed(2); };
+          inEl.addEventListener("input", sync);
+          sync();
+        }
+      }
+
+      async function runWithGuard(label, fn) {
+        try {
+          setStatus(ui.runStatus, `${label} running...`, "warn");
+          const items = await fn();
+          if (!items.length) throw new Error("No files generated.");
+          appendDownloads(items);
+          setStatus(ui.runStatus, `${label} created ${items.length} preset(s).`, "ok");
+        } catch (err) {
+          setStatus(ui.runStatus, `${label} error: ${err.message || err}`, "error");
+        }
+      }
+
+      function bindActions() {
+        ui.fileInput.addEventListener("change", (ev) => {
+          loadUploadedFiles(ev.target.files);
+          ui.fileInput.value = "";
+        });
+
+        ui.clearBtn.addEventListener("click", () => {
+          state.uploaded = [];
+          state.selected.clear();
+          state.nameCounts.clear();
+          clearDownloads();
+          renderPresetList();
+          setStatus(ui.importStatus, `Cleared uploaded presets. Internal templates: ${state.internal.length}.`, "warn");
+        });
+
+        ui.runDiffusion.addEventListener("click", () => runWithGuard("Diffusion", async () => {
+          const count = validateCount(ui.diffCount);
+          const amount = Math.max(0, Math.min(1, Number(ui.diffAmount.value)));
+          return generateDiffusion(count, amount, ui.diffSeed.value);
+        }));
+
+        ui.runFusion.addEventListener("click", () => runWithGuard("Fusion", async () => {
+          const count = validateCount(ui.fusionCount);
+          const mix = Math.max(0, Math.min(1, Number(ui.fusionMix.value)));
+          const amt = Math.max(0, Math.min(1, Number(ui.fusionAmount.value)));
+          return generateFusion(count, mix, amt, ui.fusionSeed.value);
+        }));
+
+        ui.runCatalyze.addEventListener("click", () => runWithGuard("Catalyze", async () => {
+          const count = validateCount(ui.catCount);
+          const complexity = Math.max(0, Math.min(1, Number(ui.catComplexity.value)));
+          return generateCatalyze(count, complexity, ui.catSeed.value, ui.catGuided.checked);
+        }));
+
+        ui.runAnomalize.addEventListener("click", () => runWithGuard("Anomalize", async () => {
+          const count = validateCount(ui.anomCount);
+          return generateAnomalize(count);
+        }));
+      }
+
+      bindTabs();
+      bindSliders();
+      bindActions();
+      renderPresetList();
+      loadInternalTemplates();
+    })();
+  </script>
+</body>
+</html>
