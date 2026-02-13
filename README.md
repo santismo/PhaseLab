@@ -6,8 +6,9 @@ It supports three workflows:
 - Diffusion: mutate one preset.
 - Fusion: blend/combine multiple presets into one.
 - Catalyze: generate new "random" presets.
+- Anomalize: suprise mode!
 
-<img width="1120" height="725" alt="Screenshot 2026-02-13 at 1 06 47 PM" src="https://github.com/user-attachments/assets/63a0808b-fedd-4518-a5f4-b2f534347f8d" />
+<img width="1120" height="725" alt="Screenshot 2026-02-13 at 3 04 56 PM" src="https://github.com/user-attachments/assets/3ff63120-6da8-4932-a1b7-9c9f9f77a04f" />
 
 
 ## How to Setup:
