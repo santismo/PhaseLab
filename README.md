@@ -17,9 +17,9 @@ It supports three workflows:
 - Start eperimenting!
 
 ## Disclaimers:
-- Currently only tested in Mac OS, and currently not possible to use on factory presets (experimental/under construction), user presets prefered. 
+- Currently only tested in Mac OS.
 
-## Web Demo:
+## Web Demo: (under construction)
 https://santismo.github.io/PhaseLab/ 
 
 (Not as robust as PhaseLab App)
