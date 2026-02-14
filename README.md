@@ -22,4 +22,4 @@ It supports three workflows:
 ## Web Demo: (under construction)
 https://santismo.github.io/PhaseLab/ 
 
-(Not as robust as PhaseLab App)
+(Not as robust or accurate as PhaseLab desktop app)
