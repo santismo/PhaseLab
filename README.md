@@ -1,6 +1,6 @@
 # PhaseLab
 
-PhaseLab is a python based Phase Plant preset experimentation toolkit.
+PhaseLab is a Phase Plant preset experimentation toolkit.
 
 It supports three workflows:
 - Diffusion: mutate one preset.
@@ -12,12 +12,10 @@ It supports three workflows:
 
 
 ## How to Setup:
-- Download the PhaseLab folder, place wherever you like, if placed in user preset folder path defaults to that. (Optional: create an output folder)
-- Drag the PhaseLab application (not luncher) to your desktop or applications folder, double click to open app. 
+- Download "PhaseLab-macOS-standalone.zip", unzip it, place wherever you like, if placed in user preset folder path defaults to that.
+- Select your preset folder and PhaseLab will detect all presets, and select your output folder for generated presets (Optional: create a dedicated output folder)
 - Start eperimenting!
 
-## Disclaimers:
-- Currently only tested in Mac OS.
 
 ## Web Demo: (under construction)
 https://santismo.github.io/PhaseLab/ 
