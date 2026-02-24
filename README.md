@@ -8,7 +8,7 @@ It supports three workflows:
 - Catalyze: generate new "random" presets.
 - Anomalize: suprise mode!
 
-<img width="1120" height="725" alt="Screenshot 2026-02-13 at 3 04 56 PM" src="https://github.com/user-attachments/assets/3ff63120-6da8-4932-a1b7-9c9f9f77a04f" />
+<img width="1232" height="840" alt="Screenshot 2026-02-24 at 6 51 27 PM" src="https://github.com/user-attachments/assets/6d15ce6e-5ca3-4226-969b-120f780f2288" />
 
 
 ## How to Setup:
