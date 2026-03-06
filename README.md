@@ -12,7 +12,7 @@ It supports three workflows:
 
 
 ## How to Setup:
-- Download "PhaseLab-macOS-standalone.zip", unzip it, place wherever you like, if placed in user preset folder path defaults to that.
+- Download "PhaseLab-macOS-standalone.zip" or "PhaseLab-Windows-standalone.zip", unzip it, place wherever you like, if placed in user preset folder path defaults to that.
 - Select your preset folder and PhaseLab will detect all presets, and select your output folder for generated presets (Optional: create a dedicated output folder)
 - Start eperimenting!
 
